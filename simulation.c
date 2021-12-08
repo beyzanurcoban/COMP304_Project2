@@ -9,6 +9,9 @@
 #include <sys/types.h>
 #include <pthread.h>
 #include <sys/time.h>
+#include "pthread_sleep.c"
+
+#define SIZE 1024
 
 
 // Global Variables
@@ -18,12 +21,20 @@ long start_time;
 long current_time = 0;
 long finish_time;
 struct timeval get_time;
+int vehicle_count = 0;
+int front = -1;
+int rear = -1;
+
+// Mutex, Conditional Variables, Semaphores, Locks
+pthread_mutex_t vehicle_count_mutex;
+pthread_mutex_t cross_mutex; // allows only one vehicle to pass the intersection
 
 // Function Declarations
 int program_init(int argc, char *argv[]);
 int is_occur(double p);
 int is_finished();
-void *vehicle_func(void *id);
+void *vehicle_func();
+void *police_func();
 
 int program_init(int argc, char *argv[]) {
 	/* Taking input arguments from the user:
@@ -54,7 +65,11 @@ int program_init(int argc, char *argv[]) {
 	finish_time = start_time + sim_time;
 
         printf("start time in secs: %ld\n", start_time);
-	printf("finish time in secs: %ld\n", finish_time);
+	printf("finish time in secs: %ld\n\n", finish_time);
+
+	// Mutex initialization
+	pthread_mutex_init(&vehicle_count_mutex, NULL);
+	pthread_mutex_init(&cross_mutex, NULL);
 }
 
 
@@ -64,8 +79,8 @@ int main(int argc, char *argv[]) {
 	srand(7); // initialize random number generator seed
 
 	/* Creating vehicle threads */
-	pthread_t vehicles[100];
-	int index = 0;
+	pthread_t vehicles[SIZE];
+	pthread_t police;
 
 	while(!is_finished()) {
 		gettimeofday(&get_time, NULL);
@@ -73,17 +88,24 @@ int main(int argc, char *argv[]) {
         	printf("current time now: %ld\n", current_time);
 
 		if(is_occur(p)) {
-			pthread_create(&vehicles[index], NULL, vehicle_func, (void *)index);
-			index++;
+			pthread_create(&vehicles[vehicle_count], NULL, vehicle_func, NULL);
 		}
-       		sleep(1);
+
+		pthread_create(&police, NULL, police_func, NULL);
+
+		sleep(1);
 	}
 	
 	/* Join the worker threads to the master thread */
-	for (int j=0; j<=index; j++) {
+	for (int j=0; j<=vehicle_count; j++) {
                 pthread_join(vehicles[j], NULL);
         }
 
+	pthread_join(police, NULL);
+	
+	/* Destroy mutex */
+	pthread_mutex_destroy(&vehicle_count_mutex);
+	pthread_mutex_destroy(&cross_mutex);
 
 }
 
@@ -110,10 +132,21 @@ int is_finished() {
 }
 
 /* Vehicle thread function. */
-void *vehicle_func(void *id) {
-	int vehic_id = (int) id;
-
-	printf("This is vehicle %d.\n", vehic_id);
+void *vehicle_func() {
+	
+	pthread_mutex_lock(&vehicle_count_mutex);
+	printf("This is vehicle %d.\n", vehicle_count);
+	vehicle_count++;
+	printf("Vehicle count after vehicle thread: %d\n", vehicle_count);
+	pthread_mutex_unlock(&vehicle_count_mutex);
 }
 
+void *police_func() {
+	pthread_mutex_lock(&vehicle_count_mutex);
+	if (vehicle_count > 0) {
+		vehicle_count--;
+	}
+	printf("Vehicle count after police thread: %d\n", vehicle_count);
+	pthread_mutex_unlock(&vehicle_count_mutex);
+}
 
