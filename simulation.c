@@ -11,7 +11,8 @@
 #include <sys/time.h>
 #include "pthread_sleep.c"
 
-#define SIZE 1024
+#define SIZE 4
+#define MAX 256
 
 
 // Global Variables
@@ -22,19 +23,31 @@ long current_time = 0;
 long finish_time;
 struct timeval get_time;
 int vehicle_count = 0;
-int front = -1;
-int rear = -1;
+int W_count = 1;
+int E_count = 1;
+int W_queue[MAX];
+int E_queue[MAX];
+int W_front = 0;
+int W_rear = 0;
+int E_front = 0;
+int E_rear = 0;
 
 // Mutex, Conditional Variables, Semaphores, Locks
 pthread_mutex_t vehicle_count_mutex;
+pthread_mutex_t W_count_mutex;
+pthread_mutex_t E_count_mutex;
 pthread_mutex_t cross_mutex; // allows only one vehicle to pass the intersection
+pthread_mutex_t queue_mutex;
 
 // Function Declarations
 int program_init(int argc, char *argv[]);
 int is_occur(double p);
 int is_finished();
-void *vehicle_func();
+void *W_func();
+void *E_func();
 void *police_func();
+int enqueue(int data, int front, int rear, int queue[]);
+int dequeue(int front, int rear, int queue[]);
 
 int program_init(int argc, char *argv[]) {
 	/* Taking input arguments from the user:
@@ -69,7 +82,10 @@ int program_init(int argc, char *argv[]) {
 
 	// Mutex initialization
 	pthread_mutex_init(&vehicle_count_mutex, NULL);
+	pthread_mutex_init(&W_count_mutex, NULL);
+	pthread_mutex_init(&E_count_mutex, NULL);
 	pthread_mutex_init(&cross_mutex, NULL);
+	pthread_mutex_init(&queue_mutex, NULL);
 }
 
 
@@ -78,34 +94,39 @@ int main(int argc, char *argv[]) {
 	program_init(argc, argv);
 	srand(7); // initialize random number generator seed
 
+	W_queue[0] = 0;
+	E_queue[0] = 0;
+
 	/* Creating vehicle threads */
-	pthread_t vehicles[SIZE];
+	pthread_t lane_threads[SIZE];
 	pthread_t police;
 
-	while(!is_finished()) {
+	pthread_create(&police, NULL, police_func, NULL);
+	pthread_create(&lane_threads[0], NULL, W_func, NULL);
+	//pthread_create(&lane_threads[1], NULL, E_func, NULL);
+	//pthread_create(&police, NULL, police_func, NULL);
+
+	/*while(!is_finished()) {
 		gettimeofday(&get_time, NULL);
         	current_time = get_time.tv_sec;
         	printf("current time now: %ld\n", current_time);
 
-		if(is_occur(p)) {
-			pthread_create(&vehicles[vehicle_count], NULL, vehicle_func, NULL);
-		}
-
-		pthread_create(&police, NULL, police_func, NULL);
-
-		sleep(1);
-	}
+		pthread_sleep(1);
+	}*/
 	
 	/* Join the worker threads to the master thread */
-	for (int j=0; j<=vehicle_count; j++) {
-                pthread_join(vehicles[j], NULL);
+	for (int j=0; j<=SIZE; j++) {
+                pthread_join(lane_threads[j], NULL);
         }
 
 	pthread_join(police, NULL);
 	
 	/* Destroy mutex */
 	pthread_mutex_destroy(&vehicle_count_mutex);
+	pthread_mutex_destroy(&W_count_mutex);
+	pthread_mutex_destroy(&E_count_mutex);
 	pthread_mutex_destroy(&cross_mutex);
+	pthread_mutex_destroy(&queue_mutex);
 
 }
 
@@ -131,22 +152,92 @@ int is_finished() {
         }
 }
 
-/* Vehicle thread function. */
-void *vehicle_func() {
+/* West lane thread function */
+void *W_func() {
+	pthread_mutex_lock(&W_count_mutex);
+	int W_id = W_count;
 	
-	pthread_mutex_lock(&vehicle_count_mutex);
-	printf("This is vehicle %d.\n", vehicle_count);
-	vehicle_count++;
-	printf("Vehicle count after vehicle thread: %d\n", vehicle_count);
-	pthread_mutex_unlock(&vehicle_count_mutex);
-}
-
-void *police_func() {
-	pthread_mutex_lock(&vehicle_count_mutex);
-	if (vehicle_count > 0) {
-		vehicle_count--;
+	if(!is_finished()) {
+		if(is_occur(p)) {
+			pthread_mutex_lock(&queue_mutex);
+			int ind = enqueue(W_id, W_front, W_rear, W_queue);
+			printf("West vehicle %d is added to the queue, its index: %d\n", W_id, ind);
+			W_count++;
+			pthread_mutex_unlock(&queue_mutex);
+		}
 	}
-	printf("Vehicle count after police thread: %d\n", vehicle_count);
-	pthread_mutex_unlock(&vehicle_count_mutex);
+	pthread_mutex_unlock(&W_count_mutex);
+	pthread_exit(0);
 }
 
+/* East lane thread function */
+void *E_func() {
+
+        pthread_mutex_lock(&E_count_mutex);
+        printf("This is East: %d.\n", E_count);
+        E_count++;
+        pthread_mutex_unlock(&E_count_mutex);
+}
+
+/* Pollice officer thread function */
+void *police_func() {
+
+	printf("Police officer is looking\n");
+	pthread_sleep(0.01);
+	
+	pthread_mutex_lock(&W_count_mutex);
+
+	if(!is_finished()) {
+		if(W_count > 0) {
+                	pthread_mutex_lock(&queue_mutex);
+                	int ind = dequeue(W_front, W_rear, W_queue);
+               		printf("West vehicle %d is removed from the queue\n", ind);
+                	W_count--;
+                	pthread_mutex_unlock(&queue_mutex);
+        	}
+
+	}
+	pthread_mutex_unlock(&W_count_mutex);
+	pthread_sleep(1);
+
+}
+
+/* Queue Operations */
+int enqueue(int data, int front, int rear, int queue[]) {
+	if(rear == MAX -1) {
+		perror("Queue is full!\n");
+		return -1;
+	} else {
+		if (front == -1 && rear == -1){
+			front = 0;
+			rear = 0;
+		} else {
+			rear++;
+		}
+
+		queue[rear] = data;
+
+	}
+
+	return rear;
+}
+
+int dequeue(int front, int rear, int queue[]) {
+	int data;
+
+	if (front == -1) {
+		perror("Queue is empty!\n");
+		return -1;
+	} else {
+		data = queue[front];
+
+		if (front == 0 && rear == 0) {
+			front = -1;
+			rear = -1;
+		} else {
+			front++;
+		}
+	}
+
+	return data;
+}
