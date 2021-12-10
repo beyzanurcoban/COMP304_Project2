@@ -11,7 +11,7 @@
 #include <sys/time.h>
 #include "pthread_sleep.c"
 
-#define SIZE 4
+#define LANES 4
 #define MAX 256
 
 
@@ -22,9 +22,13 @@ long start_time;
 long current_time = 0;
 long finish_time;
 struct timeval get_time;
+int lanes_decided = 0;
+int id = 0;
 
 // Mutex, Conditional Variables, Semaphores, Locks
-
+pthread_mutex_t police_checking;
+pthread_mutex_t id_mutex;
+pthread_cond_t new_turn;
 
 // Function Declarations
 int program_init(int argc, char *argv[]);
@@ -37,36 +41,39 @@ int dequeue(int front, int rear, int queue[]);
 
 int program_init(int argc, char *argv[]) {
 	/* Taking input arguments from the user:
-         * -s $(total simulation time) -p $(probability)
-         */
+    * -s $(total simulation time) -p $(probability)
+    */
 
-        if(argc != 5) {
-                perror("Not valid number of argument to run the program\n");
-                return -1;
+    if(argc != 5) {
+        perror("Not valid number of argument to run the program\n");
+        return -1;
+    }
+
+    for(int i=1; i<argc; i+=2) {
+        if(strcmp("-s", argv[i]) == 0) {
+            sim_time = atoi(argv[i+1]);
+        } else if (strcmp("-p",argv[i]) == 0) {
+            p = strtod(argv[i+1], NULL);
+        } else {
+            perror("You specified an undefined flag!\n");
+            return -1;
         }
+    }
 
-        for(int i=1; i<argc; i+=2) {
-                if(strcmp("-s", argv[i]) == 0) {
-                        sim_time = atoi(argv[i+1]);
-                } else if (strcmp("-p",argv[i]) == 0) {
-                        p = strtod(argv[i+1], NULL);
-                } else {
-                        perror("You specified an undefined flag!\n");
-                        return -1;
-                }
-        }
-
-        printf("sim_time: %d\np: %f\n", sim_time, p);
+    printf("sim_time: %d\np: %f\n", sim_time, p);
 	
 	// Get the current time in seconds, decide start time and calculate finish time
-        gettimeofday(&get_time, NULL);
-        start_time = get_time.tv_sec;
+    gettimeofday(&get_time, NULL);
+    start_time = get_time.tv_sec;
 	finish_time = start_time + sim_time;
 
-        printf("start time in secs: %ld\n", start_time);
+    printf("start time in secs: %ld\n", start_time);
 	printf("finish time in secs: %ld\n\n", finish_time);
 
 	// Mutex initialization
+	pthread_mutex_init(&police_checking, NULL);
+	pthread_mutex_init(&id_mutex, NULL);
+	pthread_cond_init(&new_turn, NULL);
 
 	return 0;
 	
@@ -79,31 +86,33 @@ int main(int argc, char *argv[]) {
 	srand(7); // initialize random number generator seed
 
 	/* Creating vehicle threads */
-	pthread_t lane_threads[SIZE];
+	pthread_t lane_threads[LANES];
 	pthread_t police;
 
 	pthread_create(&police, NULL, police_func, NULL);
-	for(int i=0; i<SIZE; i++) {
+	for(int i=0; i<LANES; i++) {
 		pthread_create(&lane_threads[i], NULL, lane_func, NULL);
 	}
 
-	while(!is_finished()) {
+	/*while(!is_finished()) {
 		gettimeofday(&get_time, NULL);
-        	current_time = get_time.tv_sec;
-        	printf("current time now: %ld\n", current_time);
+        current_time = get_time.tv_sec;
+        printf("current time now: %ld\n", current_time);
 
 		pthread_sleep(1);
-	}
+	}*/
 	
 	/* Join the worker threads to the master thread */
-	for (int j=0; j<SIZE; j++) {
-                pthread_join(lane_threads[j], NULL);
-        }
+	for (int j=0; j<LANES; j++) {
+        pthread_join(lane_threads[j], NULL);
+    }
 
 	pthread_join(police, NULL);
 	
 	/* Destroy mutex */
-	
+	pthread_mutex_destroy(&police_checking);
+	pthread_mutex_destroy(&id_mutex);
+	pthread_cond_destroy(&new_turn);
 
 	return 0;
 
@@ -124,23 +133,52 @@ int is_occur(double p) {
 /* Method to decide whether the simulation is finished based on the given simulation time (finished time) */
 int is_finished() {
 
-        if (current_time >= finish_time-1) {
-                return 1;
-        } else {
-                return 0;
-        }
+    if(current_time >= finish_time-1) {
+        return 1;
+    } else {
+        return 0;
+    }
 }
 
 /* West lane thread function */
 void *lane_func() {
-	printf("This is lane function\n");
+	pthread_mutex_lock(&id_mutex);
+		int l_id = id;
+		id++;
+	pthread_mutex_unlock(&id_mutex);
+
+	while(!is_finished()){
+		pthread_mutex_lock(&police_checking);
+			pthread_cond_wait(&new_turn, &police_checking);
+		pthread_mutex_unlock(&police_checking);
+
+		printf("This is lane %d function\n", l_id);
+		lanes_decided++;
+	}
 	pthread_exit(0);
 }
 
 
 /* Pollice officer thread function */
 void *police_func() {
-	printf("This is police function\n");
+	while (!is_finished()){
+
+		gettimeofday(&get_time, NULL);
+        current_time = get_time.tv_sec;
+        printf("current time now: %ld\n", current_time);
+
+		printf("This is police function\n");
+		pthread_mutex_lock(&police_checking);
+			pthread_cond_broadcast(&new_turn);
+		pthread_mutex_unlock(&police_checking);
+
+		//while(lanes_decided != LANES-1);
+		//printf("All lanes completed their actions\n");
+		lanes_decided = 0;
+
+		pthread_sleep(1);
+	}
+	
 	pthread_exit(0);
 }
 
