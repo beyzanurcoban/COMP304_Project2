@@ -14,6 +14,11 @@
 #define LANES 4
 #define MAX 256
 
+// There is a unique id for each direction, whenever you see lane 0, it means N lane.
+// N -> 0
+// E -> 1
+// S -> 2
+// W -> 3
 
 // Global Variables
 int sim_time;
@@ -159,27 +164,42 @@ int is_finished() {
 
 /* Lane thread function */
 void *lane_func() {
+	// Keep the id lock, and gave a unique id for each lane
 	pthread_mutex_lock(&id_mutex);
 		int l_id = id;
 		id++;
 	pthread_mutex_unlock(&id_mutex);
 
+	// Simulation
 	while(!is_finished()){
+		// If there is a police, simulation can start. All lanes are notified.
 		pthread_mutex_lock(&police_checking);
 			pthread_cond_wait(&new_turn, &police_checking);
 		pthread_mutex_unlock(&police_checking);
 
+		// Vehicles started to come for each lane according to their probability.
+		// Keep the queue mutex, so there will not be two different operation at the same time on the queue.
+		// Police cannot dequeue while the cars are enqueued.
 		pthread_mutex_lock(&queue_mutex);
-		printf("This is lane %d function\n", l_id);
+			printf("This is lane %d function\n", l_id);
 
-		if(is_occur(p)){
-			int ind = enqueue(l_id);
-			printf("Vehicle from %d is produced and added at %d index\n", l_id, ind);
-		}
+			// E, S, W is produced with probability p.
+			if(l_id != 0){
+				if(is_occur(p)){
+				int ind = enqueue(l_id);
+				printf("Vehicle from %d is produced and added at %d index\n", l_id, ind);
+				}
+			// N is produces with probability 1-p.
+			} else {
+				if(1-is_occur(p)){
+					int ind = enqueue(l_id);
+					printf("Vehicle from %d is produced and added at %d index\n", l_id, ind);
+				}
+			}
 		pthread_mutex_unlock(&queue_mutex);
 
 		pthread_mutex_lock(&lane_count);
-		lanes_decided++;
+			lanes_decided++;
 		pthread_mutex_unlock(&lane_count);
 	}
 	pthread_exit(0);
@@ -190,16 +210,19 @@ void *lane_func() {
 void *police_func() {
 	while (!is_finished()){
 
+		// Print the current simulation time.
 		gettimeofday(&get_time, NULL);
         current_time = get_time.tv_sec;
         printf("current time now: %ld\n", current_time);
 
+		// Notify the lanes that there is a police on the simulation.
 		printf("This is police function\n");
 		pthread_mutex_lock(&police_checking);
 			pthread_cond_broadcast(&new_turn);
 		pthread_mutex_unlock(&police_checking);
 
-		while(lanes_decided != LANES);
+		// Wait for all the lanes finish their operations. (Decide whether to put a vehicle to the lane or not)
+		while(lanes_decided != LANES); // busy wait
 		pthread_mutex_lock(&lane_count);
 		printf("All lanes completed their actions\n");
 		lanes_decided = 0;
