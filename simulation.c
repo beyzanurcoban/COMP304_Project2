@@ -24,11 +24,17 @@ long finish_time;
 struct timeval get_time;
 int lanes_decided = 0;
 int id = 0;
+int queue[MAX];
+int queue_count = 0;
+int front = -1;
+int rear = -1;
 
 // Mutex, Conditional Variables, Semaphores, Locks
 pthread_mutex_t police_checking;
 pthread_mutex_t id_mutex;
 pthread_cond_t new_turn;
+pthread_mutex_t lane_count;
+pthread_mutex_t queue_mutex;
 
 // Function Declarations
 int program_init(int argc, char *argv[]);
@@ -36,7 +42,7 @@ int is_occur(double p);
 int is_finished();
 void *lane_func();
 void *police_func();
-int enqueue(int data, int front, int rear, int queue[]);
+int enqueue(int data);
 int dequeue(int front, int rear, int queue[]);
 
 int program_init(int argc, char *argv[]) {
@@ -74,6 +80,8 @@ int program_init(int argc, char *argv[]) {
 	pthread_mutex_init(&police_checking, NULL);
 	pthread_mutex_init(&id_mutex, NULL);
 	pthread_cond_init(&new_turn, NULL);
+	pthread_mutex_init(&lane_count, NULL);
+	pthread_mutex_init(&queue_mutex, NULL);
 
 	return 0;
 	
@@ -84,15 +92,22 @@ int main(int argc, char *argv[]) {
 
 	program_init(argc, argv);
 	srand(7); // initialize random number generator seed
+	queue[0] = 0;
+	queue[1] = 1;
+	queue[2] = 2;
+	queue[3] = 3;
+	queue_count = 4;
+	front = 0;
+	rear = 3;
 
 	/* Creating vehicle threads */
 	pthread_t lane_threads[LANES];
 	pthread_t police;
 
-	pthread_create(&police, NULL, police_func, NULL);
 	for(int i=0; i<LANES; i++) {
 		pthread_create(&lane_threads[i], NULL, lane_func, NULL);
 	}
+	pthread_create(&police, NULL, police_func, NULL);
 
 	/*while(!is_finished()) {
 		gettimeofday(&get_time, NULL);
@@ -113,6 +128,8 @@ int main(int argc, char *argv[]) {
 	pthread_mutex_destroy(&police_checking);
 	pthread_mutex_destroy(&id_mutex);
 	pthread_cond_destroy(&new_turn);
+	pthread_mutex_destroy(&lane_count);
+	pthread_mutex_destroy(&queue_mutex);
 
 	return 0;
 
@@ -140,7 +157,7 @@ int is_finished() {
     }
 }
 
-/* West lane thread function */
+/* Lane thread function */
 void *lane_func() {
 	pthread_mutex_lock(&id_mutex);
 		int l_id = id;
@@ -152,8 +169,18 @@ void *lane_func() {
 			pthread_cond_wait(&new_turn, &police_checking);
 		pthread_mutex_unlock(&police_checking);
 
+		pthread_mutex_lock(&queue_mutex);
 		printf("This is lane %d function\n", l_id);
+
+		if(is_occur(p)){
+			int ind = enqueue(l_id);
+			printf("Vehicle from %d is produced and added at %d index\n", l_id, ind);
+		}
+		pthread_mutex_unlock(&queue_mutex);
+
+		pthread_mutex_lock(&lane_count);
 		lanes_decided++;
+		pthread_mutex_unlock(&lane_count);
 	}
 	pthread_exit(0);
 }
@@ -172,9 +199,11 @@ void *police_func() {
 			pthread_cond_broadcast(&new_turn);
 		pthread_mutex_unlock(&police_checking);
 
-		//while(lanes_decided != LANES-1);
-		//printf("All lanes completed their actions\n");
+		while(lanes_decided != LANES);
+		pthread_mutex_lock(&lane_count);
+		printf("All lanes completed their actions\n");
 		lanes_decided = 0;
+		pthread_mutex_unlock(&lane_count);
 
 		pthread_sleep(1);
 	}
@@ -183,7 +212,7 @@ void *police_func() {
 }
 
 /* Queue Operations */
-int enqueue(int data, int front, int rear, int queue[]) {
+int enqueue(int data) {
 	if(rear == MAX -1) {
 		perror("Queue is full!\n");
 		return -1;
@@ -198,12 +227,13 @@ int enqueue(int data, int front, int rear, int queue[]) {
 		queue[rear] = data;
 
 	}
-
+	queue_count++;
 	return rear;
 }
 
 int dequeue(int front, int rear, int queue[]) {
 	int data;
+	pthread_mutex_lock(&queue_mutex);
 
 	if (front == -1) {
 		perror("Queue is empty!\n");
@@ -218,6 +248,8 @@ int dequeue(int front, int rear, int queue[]) {
 			front++;
 		}
 	}
+	queue_count--;
+	pthread_mutex_unlock(&queue_mutex);
 
 	return data;
 }
