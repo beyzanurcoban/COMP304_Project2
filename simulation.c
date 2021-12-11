@@ -40,6 +40,8 @@ pthread_mutex_t id_mutex;
 pthread_cond_t new_turn;
 pthread_mutex_t lane_count;
 pthread_mutex_t queue_mutex;
+pthread_mutex_t intersection;
+pthread_cond_t passing;
 
 // Function Declarations
 int program_init(int argc, char *argv[]);
@@ -48,7 +50,7 @@ int is_finished();
 void *lane_func();
 void *police_func();
 int enqueue(int data);
-int dequeue(int front, int rear, int queue[]);
+int dequeue();
 
 int program_init(int argc, char *argv[]) {
 	/* Taking input arguments from the user:
@@ -87,6 +89,8 @@ int program_init(int argc, char *argv[]) {
 	pthread_cond_init(&new_turn, NULL);
 	pthread_mutex_init(&lane_count, NULL);
 	pthread_mutex_init(&queue_mutex, NULL);
+	pthread_mutex_init(&intersection, NULL);
+	pthread_cond_init(&passing, NULL);
 
 	return 0;
 	
@@ -97,11 +101,14 @@ int main(int argc, char *argv[]) {
 
 	program_init(argc, argv);
 	srand(7); // initialize random number generator seed
+
+	// At the beginnin, there are one vehicle at each lane, queue[0] means there is a car in N lane
 	queue[0] = 0;
 	queue[1] = 1;
 	queue[2] = 2;
 	queue[3] = 3;
 	queue_count = 4;
+	// Queue variables
 	front = 0;
 	rear = 3;
 
@@ -109,18 +116,11 @@ int main(int argc, char *argv[]) {
 	pthread_t lane_threads[LANES];
 	pthread_t police;
 
+	// Thread creation (in total there are 5 threads)
 	for(int i=0; i<LANES; i++) {
 		pthread_create(&lane_threads[i], NULL, lane_func, NULL);
 	}
 	pthread_create(&police, NULL, police_func, NULL);
-
-	/*while(!is_finished()) {
-		gettimeofday(&get_time, NULL);
-        current_time = get_time.tv_sec;
-        printf("current time now: %ld\n", current_time);
-
-		pthread_sleep(1);
-	}*/
 	
 	/* Join the worker threads to the master thread */
 	for (int j=0; j<LANES; j++) {
@@ -128,6 +128,10 @@ int main(int argc, char *argv[]) {
     }
 
 	pthread_join(police, NULL);
+
+	// for(int i=0; i<queue_count; i++){
+	// 	printf("Queue: %d\n", queue[i]);
+	// }
 	
 	/* Destroy mutex */
 	pthread_mutex_destroy(&police_checking);
@@ -135,6 +139,8 @@ int main(int argc, char *argv[]) {
 	pthread_cond_destroy(&new_turn);
 	pthread_mutex_destroy(&lane_count);
 	pthread_mutex_destroy(&queue_mutex);
+	pthread_mutex_destroy(&intersection);
+	pthread_cond_destroy(&passing);
 
 	return 0;
 
@@ -201,6 +207,23 @@ void *lane_func() {
 		pthread_mutex_lock(&lane_count);
 			lanes_decided++;
 		pthread_mutex_unlock(&lane_count);
+
+		// Dequeue
+		// Vehicles wait for the signal from the police officer to pass the intersection
+		// while(lanes_decided != LANES);
+		// printf("lanes decided: %d\n", lanes_decided);
+		// pthread_mutex_lock(&intersection);
+		// 	pthread_cond_wait(&passing, &intersection); // ikinci turda burada takiliyor, cunku line 261 sinyal veremiyor cunku line 252 busy waitte
+		// 	printf("signal is received\n");
+
+		// 	pthread_mutex_lock(&queue_mutex);
+		// 		printf("lock is acquired\n");
+		// 		int ind = dequeue();
+		// 		printf("We have removed from lane %d\n", ind);
+		// 	pthread_mutex_unlock(&queue_mutex);
+
+		// pthread_mutex_unlock(&intersection);
+
 	}
 	pthread_exit(0);
 }
@@ -224,11 +247,21 @@ void *police_func() {
 		// Wait for all the lanes finish their operations. (Decide whether to put a vehicle to the lane or not)
 		while(lanes_decided != LANES); // busy wait
 		pthread_mutex_lock(&lane_count);
-		printf("All lanes completed their actions\n");
-		lanes_decided = 0;
+			printf("All lanes completed their actions\n");
+			lanes_decided = 0;
 		pthread_mutex_unlock(&lane_count);
 
+		// Signal for dequeue
+		// pthread_mutex_lock(&intersection);
+		// if(queue_count > 0){
+		// 		pthread_cond_signal(&passing);
+		// 		printf("signal is sent\n");
+		// }
+		// pthread_mutex_unlock(&intersection);
+
+
 		pthread_sleep(1);
+
 	}
 	
 	pthread_exit(0);
@@ -254,9 +287,8 @@ int enqueue(int data) {
 	return rear;
 }
 
-int dequeue(int front, int rear, int queue[]) {
+int dequeue() {
 	int data;
-	pthread_mutex_lock(&queue_mutex);
 
 	if (front == -1) {
 		perror("Queue is empty!\n");
@@ -272,7 +304,6 @@ int dequeue(int front, int rear, int queue[]) {
 		}
 	}
 	queue_count--;
-	pthread_mutex_unlock(&queue_mutex);
 
 	return data;
 }
