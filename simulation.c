@@ -111,6 +111,7 @@ int main(int argc, char *argv[]) {
 	// Queue variables
 	front = 0;
 	rear = 3;
+	
 
 	/* Creating vehicle threads */
 	pthread_t lane_threads[LANES];
