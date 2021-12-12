@@ -356,5 +356,5 @@ int dequeue() {
 		}
 	}
 
-	return vehicleID;
+	return lane_selected;
 }
