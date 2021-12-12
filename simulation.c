@@ -336,6 +336,7 @@ int dequeue() {
 				vehicleID = j;
 				break;
 			}
+			j++;
 		}
 
 		printf("Vehicle to be extracted:\t%d\n", vehicleID);
