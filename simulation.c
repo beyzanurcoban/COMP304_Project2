@@ -23,14 +23,21 @@
 // Global Variables
 int sim_time;
 double p;
-long start_time;
-long current_time = 0;
-long finish_time;
+time_t start_time;
+time_t current_time;
+time_t finish_time;
 struct timeval get_time;
+// struct tm *current_time_local;
 int lanes_decided = 0;
 int id = 0;
 int queue[MAX];
 int queue_count = 0;
+
+int north_count = 0;
+int east_count = 0;
+int south_count = 0;
+int west_count = 0;
+
 int front = -1;
 int rear = -1;
 
@@ -188,19 +195,24 @@ void *lane_func() {
 		// Keep the queue mutex, so there will not be two different operation at the same time on the queue.
 		// Police cannot dequeue while the cars are enqueued.
 		pthread_mutex_lock(&queue_mutex);
-			printf("This is lane %d function\n", l_id);
+			printf("Hi! This is Lane %d.\n", l_id);
 
 			// E, S, W is produced with probability p.
 			if(l_id != 0){
 				if(is_occur(p)){
 				int ind = enqueue(l_id);
-				printf("Vehicle from %d is produced and added at %d index\n", l_id, ind);
-				}
+				printf("At Lane %d, Vehicle %d has arrived.\n", l_id, ind);
+
+				if(l_id==1) east_count++;
+				if(l_id==2) south_count++;
+				if(l_id==3) west_count++;
+			}
 			// N is produces with probability 1-p.
 			} else {
 				if(1-is_occur(p)){
 					int ind = enqueue(l_id);
-					printf("Vehicle from %d is produced and added at %d index\n", l_id, ind);
+					printf("At Lane %d, Vehicle %d has arrived.\n", l_id, ind);
+					north_count++;
 				}
 			}
 		pthread_mutex_unlock(&queue_mutex);
@@ -209,21 +221,6 @@ void *lane_func() {
 			lanes_decided++;
 		pthread_mutex_unlock(&lane_count);
 
-		// Dequeue
-		// Vehicles wait for the signal from the police officer to pass the intersection
-		// while(lanes_decided != LANES);
-		// printf("lanes decided: %d\n", lanes_decided);
-		// pthread_mutex_lock(&intersection);
-		// 	pthread_cond_wait(&passing, &intersection); // ikinci turda burada takiliyor, cunku line 261 sinyal veremiyor cunku line 252 busy waitte
-		// 	printf("signal is received\n");
-
-		// 	pthread_mutex_lock(&queue_mutex);
-		// 		printf("lock is acquired\n");
-		// 		int ind = dequeue();
-		// 		printf("We have removed from lane %d\n", ind);
-		// 	pthread_mutex_unlock(&queue_mutex);
-
-		// pthread_mutex_unlock(&intersection);
 
 	}
 	pthread_exit(0);
@@ -237,30 +234,58 @@ void *police_func() {
 		// Print the current simulation time.
 		gettimeofday(&get_time, NULL);
         current_time = get_time.tv_sec;
-        printf("current time now: %ld\n", current_time);
+        printf("Current Time:\t%ld\n", current_time);
 
 		// Notify the lanes that there is a police on the simulation.
-		printf("This is police function\n");
+		printf("Hi! This is The Police.\n");
 		pthread_mutex_lock(&police_checking);
 			pthread_cond_broadcast(&new_turn);
 		pthread_mutex_unlock(&police_checking);
 
 		// Wait for all the lanes finish their operations. (Decide whether to put a vehicle to the lane or not)
 		while(lanes_decided != LANES); // busy wait
-		pthread_mutex_lock(&lane_count);
-			printf("All lanes completed their actions\n");
-			lanes_decided = 0;
-		pthread_mutex_unlock(&lane_count);
+		printf("All lanes have completed their actions.\n");
 
 		// Signal for dequeue
 		// pthread_mutex_lock(&intersection);
 		// if(queue_count > 0){
 		// 		pthread_cond_signal(&passing);
-		// 		printf("signal is sent\n");
+		// 		printf("Police signals for safe passage\n");
 		// }
 		// pthread_mutex_unlock(&intersection);
 
+		// Dequeue
+		// Vehicles wait for the signal from the police officer to pass the intersection
+		while(lanes_decided != LANES);
+		printf("Lanes that have decided: %d\n", lanes_decided);
+		pthread_mutex_lock(&intersection);
+			// if(queue_count > 0){
+			// 	pthread_cond_signal(&passing);
+			// 	printf("Police signals for safe passage\n");
+			// }
+			// pthread_cond_wait(&passing, &intersection);
+			// printf("Car receives signal for safe passage\n");
 
+			pthread_mutex_lock(&queue_mutex);
+				int ind = dequeue();
+				printf("A vehicle was sent off from Lane %d.\n", ind);
+			pthread_mutex_unlock(&queue_mutex);
+
+		pthread_mutex_unlock(&intersection);
+
+		// Reset Lane Decision Count
+		pthread_mutex_lock(&lane_count);
+			lanes_decided = 0;
+		pthread_mutex_unlock(&lane_count);
+		
+		// Visualize Queue
+		printf("Current Queue:\t");
+		int j;
+		for(j=0; j<queue_count; j++) printf(" %d", queue[j]);
+		printf("\n");
+
+		// Car from decided lane passes
+		printf("\n");
 		pthread_sleep(1);
 
 	}
@@ -289,22 +314,46 @@ int enqueue(int data) {
 }
 
 int dequeue() {
-	int data;
+	int vehicleID;
+	int lane_selected = 0;
 
 	if (front == -1) {
 		perror("Queue is empty!\n");
 		return -1;
 	} else {
-		data = queue[front];
+		// Select line to be dequeued
+		if(west_count > south_count && west_count > east_count && west_count > north_count) { lane_selected = 3; }
+		else if(south_count > east_count && south_count > north_count) { lane_selected = 2; }
+		else if(east_count > north_count) { lane_selected = 1; }
+		else { lane_selected = 0; }
+
+		printf("Lane %d has been selected by police.\n", lane_selected);
+
+		// Find the foremost vehicle in that lane
+		int j=0;
+		while(j<=queue_count) {
+			if(lane_selected == queue[j]) {
+				vehicleID = j;
+				break;
+			}
+		}
+
+		printf("Vehicle to be extracted:\t%d\n", vehicleID);
+		
+		// Remove that vehicle from the lane
+		queue[vehicleID] = 4;
+		if(lane_selected == 0) { north_count--; }
+		else if(lane_selected == 1) { east_count--; }
+		else if(lane_selected == 2) { south_count--; }
+		else if(lane_selected == 3) { west_count--; }
+
+		printf("Vehicle extracted.\n");
 
 		if (front == 0 && rear == 0) {
 			front = -1;
 			rear = -1;
-		} else {
-			front++;
 		}
 	}
-	queue_count--;
 
-	return data;
+	return vehicleID;
 }
