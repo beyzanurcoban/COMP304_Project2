@@ -12,9 +12,9 @@
 #include "pthread_sleep.c"
 
 #define LANES 4
-#define MAX 256
+#define MAX 2048
 
-// There is a unique id for each direction, whenever you see lane 0, it means N lane.
+// There is a unique id for each direction. Whenever you see lane 0, it means N lane.
 // N -> 0
 // E -> 1
 // S -> 2
@@ -41,14 +41,16 @@ int west_count = 0;
 int front = -1;
 int rear = -1;
 
+int last_dequeued_lane = 4;
+int vehicleID;
+
 // Mutex, Conditional Variables, Semaphores, Locks
 pthread_mutex_t police_checking;
 pthread_mutex_t id_mutex;
 pthread_cond_t new_turn;
-pthread_mutex_t lane_count;
-pthread_mutex_t queue_mutex;
-pthread_mutex_t intersection;
-pthread_cond_t passing;
+pthread_mutex_t lane_count; // mutex for incrementing decided lane numbers
+pthread_mutex_t queue_mutex; // only one thread can make an operation on the queue
+pthread_mutex_t intersection; // only one car is allowed to pass the intersection
 
 // Function Declarations
 int program_init(int argc, char *argv[]);
@@ -58,6 +60,8 @@ void *lane_func();
 void *police_func();
 int enqueue(int data);
 int dequeue();
+int from_diff_lane();
+int dequeue_decision();
 
 int program_init(int argc, char *argv[]) {
 	/* Taking input arguments from the user:
@@ -97,7 +101,6 @@ int program_init(int argc, char *argv[]) {
 	pthread_mutex_init(&lane_count, NULL);
 	pthread_mutex_init(&queue_mutex, NULL);
 	pthread_mutex_init(&intersection, NULL);
-	pthread_cond_init(&passing, NULL);
 
 	return 0;
 	
@@ -111,9 +114,13 @@ int main(int argc, char *argv[]) {
 
 	// At the beginnin, there are one vehicle at each lane, queue[0] means there is a car in N lane
 	queue[0] = 0;
+	north_count++;
 	queue[1] = 1;
+	east_count++;
 	queue[2] = 2;
+	south_count++;
 	queue[3] = 3;
+	west_count++;
 	queue_count = 4;
 	// Queue variables
 	front = 0;
@@ -136,10 +143,6 @@ int main(int argc, char *argv[]) {
     }
 
 	pthread_join(police, NULL);
-
-	// for(int i=0; i<queue_count; i++){
-	// 	printf("Queue: %d\n", queue[i]);
-	// }
 	
 	/* Destroy mutex */
 	pthread_mutex_destroy(&police_checking);
@@ -148,7 +151,6 @@ int main(int argc, char *argv[]) {
 	pthread_mutex_destroy(&lane_count);
 	pthread_mutex_destroy(&queue_mutex);
 	pthread_mutex_destroy(&intersection);
-	pthread_cond_destroy(&passing);
 
 	return 0;
 
@@ -236,6 +238,11 @@ void *police_func() {
         current_time = get_time.tv_sec;
         printf("Current Time:\t%ld\n", current_time);
 
+		// After 1 second, we dequeued a car and we show it.
+		if(last_dequeued_lane != 4){
+			printf("Vehicle % d from the lane %d finished their passing process in 1 second.\n", vehicleID, last_dequeued_lane);
+		}
+
 		// Notify the lanes that there is a police on the simulation.
 		printf("Hi! This is The Police.\n");
 		pthread_mutex_lock(&police_checking);
@@ -246,25 +253,10 @@ void *police_func() {
 		while(lanes_decided != LANES); // busy wait
 		printf("All lanes have completed their actions.\n");
 
-		// Signal for dequeue
-		// pthread_mutex_lock(&intersection);
-		// if(queue_count > 0){
-		// 		pthread_cond_signal(&passing);
-		// 		printf("Police signals for safe passage\n");
-		// }
-		// pthread_mutex_unlock(&intersection);
-
 		// Dequeue
 		// Vehicles wait for the signal from the police officer to pass the intersection
 		while(lanes_decided != LANES);
-		printf("Lanes that have decided: %d\n", lanes_decided);
 		pthread_mutex_lock(&intersection);
-			// if(queue_count > 0){
-			// 	pthread_cond_signal(&passing);
-			// 	printf("Police signals for safe passage\n");
-			// }
-			// pthread_cond_wait(&passing, &intersection);
-			// printf("Car receives signal for safe passage\n");
 
 			// Visualize Queue Before A Vehicle is Let Off
 			pthread_mutex_lock(&queue_mutex);
@@ -327,18 +319,22 @@ int enqueue(int data) {
 }
 
 int dequeue() {
-	int vehicleID;
+	int decision = 4;
 	int lane_selected = 0;
 
 	if (front == -1) {
-		perror("Queue is empty!\n");
-		return -1;
+		printf("Queue is empty!\n");
 	} else {
-		// Select line to be dequeued
-		if(west_count > south_count && west_count > east_count && west_count > north_count) { lane_selected = 3; }
-		else if(south_count > east_count && south_count > north_count) { lane_selected = 2; }
-		else if(east_count > north_count) { lane_selected = 1; }
-		else { lane_selected = 0; }
+		
+		decision = dequeue_decision();
+
+		if(decision == 4){
+			lane_selected = from_diff_lane();
+		} else {
+			lane_selected = decision;
+		}
+		// Keep the last dequeued lane to decide the next
+		last_dequeued_lane = lane_selected;
 
 		printf("Lane %d has been selected by police.\n", lane_selected);
 
@@ -368,4 +364,46 @@ int dequeue() {
 	}
 
 	return lane_selected;
+}
+
+/* If we decide to dequeue from a different lane, this method decides which lane it will be */
+int from_diff_lane(){
+	int lane_selected = 0;
+
+	// Select line to be dequeued
+	if(west_count > south_count && west_count > east_count && west_count > north_count) { lane_selected = 3; }
+	else if(south_count > east_count && south_count > north_count) { lane_selected = 2; }
+	else if(east_count > north_count) { lane_selected = 1; }
+	else { lane_selected = 0; }
+
+	return lane_selected;
+}
+
+/* Method to decide whether we should continue from the same lane or not */
+int dequeue_decision() {
+	int decision = 4;
+
+	/* If there is at least one car in the current lane, and other lanes do not have at least 5 cars yet:
+	 * You should dequeue from the same line */
+	if(last_dequeued_lane == 0){
+		if(north_count > 0 && east_count < 5 && south_count < 5 && west_count < 5){
+			decision = 0;
+		}
+	} else if(last_dequeued_lane == 1){
+		if(east_count > 0 && north_count < 5 && south_count < 5 && west_count < 5){
+			decision = 1;
+		}
+	} else if(last_dequeued_lane == 2){
+		if(south_count > 0 && north_count < 5 && east_count < 5 && west_count < 5){
+			decision = 2;
+		}
+	} else if(last_dequeued_lane == 3){
+		if(west_count > 0 && north_count < 5 && east_count < 5 && south_count < 5){
+			decision = 3;
+		}
+	}
+
+	/* If there is no car in the current lane, or there are at least 5 cars in the other lanes:
+	 * You should switch the lane, we return 4 for this change  */
+	return decision;
 }
