@@ -279,10 +279,14 @@ void *police_func() {
 		pthread_mutex_unlock(&lane_count);
 		
 		// Visualize Queue
-		printf("Current Queue:\t");
-		int j;
-		for(j=0; j<queue_count; j++) printf(" %d", queue[j]);
-		printf("\n");
+		pthread_mutex_lock(&queue_mutex);
+			printf("Current Queue:\t");
+			int j;
+			for(j=0; j<queue_count; j++) {
+				if(queue[j] != 4) printf(" %d", queue[j]);
+			}
+			printf("\n");
+		pthread_mutex_unlock(&queue_mutex);
 
 		// Car from decided lane passes
 		printf("\n");
@@ -339,7 +343,7 @@ int dequeue() {
 			j++;
 		}
 
-		printf("Vehicle to be extracted:\t%d\n", vehicleID);
+		printf("Vehicle to be extracted: %d\n", vehicleID);
 		
 		// Remove that vehicle from the lane
 		queue[vehicleID] = 4;
