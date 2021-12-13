@@ -266,9 +266,18 @@ void *police_func() {
 			// pthread_cond_wait(&passing, &intersection);
 			// printf("Car receives signal for safe passage\n");
 
+			// Visualize Queue Before A Vehicle is Let Off
+			pthread_mutex_lock(&queue_mutex);
+				printf("Queue Before:\t");
+				int k;
+				for(k=0; k<queue_count; k++) {
+					if(queue[k] != 4) printf(" %d", queue[k]);
+				}
+				printf("\n");
+			pthread_mutex_unlock(&queue_mutex);
+
 			pthread_mutex_lock(&queue_mutex);
 				int ind = dequeue();
-				printf("A vehicle was sent off from Lane %d.\n", ind);
 			pthread_mutex_unlock(&queue_mutex);
 
 		pthread_mutex_unlock(&intersection);
@@ -278,9 +287,9 @@ void *police_func() {
 			lanes_decided = 0;
 		pthread_mutex_unlock(&lane_count);
 		
-		// Visualize Queue
+		// Visualize Queue After A Car is Sent Off
 		pthread_mutex_lock(&queue_mutex);
-			printf("Current Queue:\t");
+			printf("Queue After:\t");
 			int j;
 			for(j=0; j<queue_count; j++) {
 				if(queue[j] != 4) printf(" %d", queue[j]);
@@ -343,7 +352,7 @@ int dequeue() {
 			j++;
 		}
 
-		printf("Vehicle to be extracted: %d\n", vehicleID);
+		printf("Vehicle %d was sent off from Lane %d\n", vehicleID, lane_selected);
 		
 		// Remove that vehicle from the lane
 		queue[vehicleID] = 4;
@@ -351,8 +360,6 @@ int dequeue() {
 		else if(lane_selected == 1) { east_count--; }
 		else if(lane_selected == 2) { south_count--; }
 		else if(lane_selected == 3) { west_count--; }
-
-		printf("Vehicle extracted.\n");
 
 		if (front == 0 && rear == 0) {
 			front = -1;
