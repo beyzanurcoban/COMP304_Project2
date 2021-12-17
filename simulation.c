@@ -44,6 +44,8 @@ int dequeuedVehicleID;
 struct Car *front = NULL;
 struct Car *rear = NULL;
 
+int wait_times[LANES];
+
 
 // Mutex, Conditional Variables, Semaphores, Locks
 pthread_mutex_t police_checking;
@@ -63,11 +65,13 @@ void enqueue(int id, int lane, long a_time);
 void dequeue();
 int from_diff_lane();
 int dequeue_decision();
+void decide_wait_times();
 
 struct Car {
 	int id;
 	long arrive_time;
 	long leave_time;
+	int waiting;
 	int lane;
 	struct Car *next;
 };
@@ -301,6 +305,7 @@ void enqueue(int id, int lane, long a_time) {
 	newCar->id = id;
 	newCar->arrive_time = a_time;
 	newCar->lane = lane;
+	newCar->waiting = 0;
 	newCar->next = NULL;
 
 	if(front == NULL && rear == NULL){
@@ -345,6 +350,13 @@ void dequeue() {
 		else if(lane_selected == 3) { west_count--; }
 
 		queue_count--;
+
+		// Increase the waiting times of the cars in the list
+		struct Car *waitCar = front;
+		while(waitCar != NULL){
+			waitCar->waiting = waitCar->waiting+1;
+			waitCar = waitCar->next;
+		}
 
 		// Deleting from the linked list
 		struct Car *temp;
@@ -423,7 +435,89 @@ int dequeue_decision() {
 		}
 	}
 
+	// PART II - Start
+	/* We check the waiting times 
+	 * We check part (c) after checking the (b) part
+	 * because we want a priority of (c), this will overwrite the decision even if (b) holds */
+	decide_wait_times();
+	printf("Lane 0 waited %d seconds after the last dequeue.\n", wait_times[0]);
+	printf("Lane 1 waited %d seconds after the last dequeue.\n", wait_times[1]);
+	printf("Lane 2 waited %d seconds after the last dequeue.\n", wait_times[2]);
+	printf("Lane 3 waited %d seconds after the last dequeue.\n", wait_times[3]);
+
+	if(wait_times[0] >= 20){
+		decision = 0;
+	} else if(wait_times[1] >= 20){
+		decision = 1;
+	} else if(wait_times[2] >= 20){
+		decision = 2;
+	} else if(wait_times[3] >= 20){
+		decision = 3;
+	}
+	//  PART II - Finish
+
 	/* If there is no car in the current lane, or there are at least 5 cars in the other lanes:
 	 * You should switch the lane, we return 4 for this change  */
 	return decision;
+}
+
+/* Method to find the maximum waiting time in each line */
+void decide_wait_times() {
+	struct Car *node = front;
+
+	// Decide the waiting time of the first car in Lane North
+	if(north_count==0) {
+		wait_times[0] = 0;
+	} else {
+		while(node != NULL){
+			if(node->lane == 0){
+				wait_times[0] = node->waiting;
+				break;
+			}
+			node = node->next;
+		}
+	}
+
+	// Decide the waiting time of the first car in Lane East
+	node = front;
+	if(east_count==0) {
+		wait_times[1] = 0;
+	} else {
+		while(node != NULL){
+			if(node->lane == 1){
+				wait_times[1] = node->waiting;
+				break;
+			}
+			node = node->next;
+		}
+	}
+
+	// Decide the waiting time of the first car in Lane South
+	node = front;
+	if(south_count==0) {
+		wait_times[2] = 0;
+	} else {
+		while(node != NULL){
+			if(node->lane == 2){
+				wait_times[2] = node->waiting;
+				break;
+			}
+			node = node->next;
+		}
+	}
+
+	// Decide the waiting time of the first car in Lane West
+	node = front;
+	if(west_count==0) {
+		wait_times[3] = 0;
+	} else {
+		while(node != NULL){
+			if(node->lane == 3){
+				wait_times[3] = node->waiting;
+				break;
+			}
+			node = node->next;
+		}
+	}
+
 }
