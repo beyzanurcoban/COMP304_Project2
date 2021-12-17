@@ -29,20 +29,21 @@ time_t finish_time;
 struct timeval get_time;
 int lanes_decided = 0;
 int id = 0;
-int queue[MAX];
-int queue_count = 0;
-int wait_times[LANES] = {-1, -1, -1, -1}; // PART II
 
 int north_count = 0;
 int east_count = 0;
 int south_count = 0;
 int west_count = 0;
 
-int front = -1;
-int rear = -1;
+int queue_count = 0;
 
 int last_dequeued_lane = 4;
-int vehicleID;
+int vehicleID = 0;
+int dequeuedVehicleID;
+
+struct Car *front = NULL;
+struct Car *rear = NULL;
+
 
 // Mutex, Conditional Variables, Semaphores, Locks
 pthread_mutex_t police_checking;
@@ -51,7 +52,6 @@ pthread_cond_t new_turn;
 pthread_mutex_t lane_count; // mutex for incrementing decided lane numbers
 pthread_mutex_t queue_mutex; // only one thread can make an operation on the queue
 pthread_mutex_t intersection; // only one car is allowed to pass the intersection
-pthread_mutex_t wait_time_mutex;
 
 // Function Declarations
 int program_init(int argc, char *argv[]);
@@ -59,10 +59,18 @@ int is_occur(double p);
 int is_finished();
 void *lane_func();
 void *police_func();
-int enqueue(int data);
-int dequeue();
+void enqueue(int id, int lane, long a_time);
+void dequeue();
 int from_diff_lane();
 int dequeue_decision();
+
+struct Car {
+	int id;
+	long arrive_time;
+	long leave_time;
+	int lane;
+	struct Car *next;
+};
 
 int program_init(int argc, char *argv[]) {
 	/* Taking input arguments from the user:
@@ -102,7 +110,6 @@ int program_init(int argc, char *argv[]) {
 	pthread_mutex_init(&lane_count, NULL);
 	pthread_mutex_init(&queue_mutex, NULL);
 	pthread_mutex_init(&intersection, NULL);
-	pthread_mutex_init(&wait_time_mutex, NULL);
 
 	return 0;
 	
@@ -115,20 +122,11 @@ int main(int argc, char *argv[]) {
 	srand(7); // initialize random number generator seed
 
 	// At the beginnin, there are one vehicle at each lane, queue[0] means there is a car in N lane
-	queue[0] = 0;
-	north_count++;
-	queue[1] = 1;
-	east_count++;
-	queue[2] = 2;
-	south_count++;
-	queue[3] = 3;
-	west_count++;
-	queue_count = 4;
-	// Queue variables
-	front = 0;
-	rear = 3;
+	enqueue(vehicleID, 0, start_time);
+	enqueue(vehicleID, 1, start_time);
+	enqueue(vehicleID, 2, start_time);
+	enqueue(vehicleID, 3, start_time);
 	
-
 	/* Creating vehicle threads */
 	pthread_t lane_threads[LANES];
 	pthread_t police;
@@ -153,7 +151,6 @@ int main(int argc, char *argv[]) {
 	pthread_mutex_destroy(&lane_count);
 	pthread_mutex_destroy(&queue_mutex);
 	pthread_mutex_destroy(&intersection);
-	pthread_mutex_destroy(&wait_time_mutex);
 
 	return 0;
 
@@ -205,19 +202,14 @@ void *lane_func() {
 			// E, S, W is produced with probability p.
 			if(l_id != 0){
 				if(is_occur(p)){
-				int ind = enqueue(l_id);
-				printf("At Lane %d, Vehicle %d has arrived.\n", l_id, ind);
-
-				if(l_id==1) east_count++;
-				if(l_id==2) south_count++;
-				if(l_id==3) west_count++;
+				printf("At Lane %d, Vehicle %d has arrived.\n", l_id, vehicleID);
+				enqueue(vehicleID, l_id, current_time);
 			}
 			// N is produces with probability 1-p.
 			} else {
 				if(1-is_occur(p)){
-					int ind = enqueue(l_id);
-					printf("At Lane %d, Vehicle %d has arrived.\n", l_id, ind);
-					north_count++;
+					printf("At Lane %d, Vehicle %d has arrived.\n", l_id, vehicleID);
+					enqueue(vehicleID, l_id, current_time);
 				}
 			}
 		pthread_mutex_unlock(&queue_mutex);
@@ -243,7 +235,7 @@ void *police_func() {
 
 		// After 1 second, we dequeued a car and we show it.
 		if(last_dequeued_lane != 4){
-			printf("Vehicle % d from the lane %d finished their passing process in 1 second.\n", vehicleID, last_dequeued_lane);
+			printf("Vehicle % d from the lane %d finished their passing process in 1 second.\n", dequeuedVehicleID, last_dequeued_lane);
 		}
 
 		// Notify the lanes that there is a police on the simulation.
@@ -264,15 +256,16 @@ void *police_func() {
 			// Visualize Queue Before A Vehicle is Let Off
 			pthread_mutex_lock(&queue_mutex);
 				printf("Queue Before:\t");
-				int k;
-				for(k=0; k<queue_count; k++) {
-					if(queue[k] != 4) printf(" %d", queue[k]);
+				struct Car *before = front;
+				while(before != NULL){
+					printf(" %d", before->lane);
+					before = before->next;
 				}
 				printf("\n");
 			pthread_mutex_unlock(&queue_mutex);
 
 			pthread_mutex_lock(&queue_mutex);
-				int ind = dequeue();
+				dequeue();
 			pthread_mutex_unlock(&queue_mutex);
 
 		pthread_mutex_unlock(&intersection);
@@ -285,9 +278,10 @@ void *police_func() {
 		// Visualize Queue After A Car is Sent Off
 		pthread_mutex_lock(&queue_mutex);
 			printf("Queue After:\t");
-			int j;
-			for(j=0; j<queue_count; j++) {
-				if(queue[j] != 4) printf(" %d", queue[j]);
+			struct Car *after = front;
+			while(after != NULL){
+				printf(" %d", after->lane);
+				after = after->next;
 			}
 			printf("\n");
 		pthread_mutex_unlock(&queue_mutex);
@@ -302,30 +296,34 @@ void *police_func() {
 }
 
 /* Queue Operations */
-int enqueue(int data) {
-	if(rear == MAX -1) {
-		perror("Queue is full!\n");
-		return -1;
+void enqueue(int id, int lane, long a_time) {
+	struct Car *newCar = malloc(sizeof(struct Car));
+	newCar->id = id;
+	newCar->arrive_time = a_time;
+	newCar->lane = lane;
+	newCar->next = NULL;
+
+	if(front == NULL && rear == NULL){
+		front = rear = newCar;
 	} else {
-		if (front == -1 && rear == -1){
-			front = 0;
-			rear = 0;
-		} else {
-			rear++;
-		}
-
-		queue[rear] = data;
-
+		rear->next = newCar;
+		rear = newCar;
 	}
+
+	if(lane==0) north_count++;
+	if(lane==1) east_count++;
+	if(lane==2) south_count++;
+	if(lane==3) west_count++;
+
 	queue_count++;
-	return rear;
+	vehicleID++;
 }
 
-int dequeue() {
+void dequeue() {
 	int decision = 4;
 	int lane_selected = 0;
 
-	if (front == -1) {
+	if (front == NULL) {
 		printf("Queue is empty!\n");
 	} else {
 		
@@ -341,49 +339,51 @@ int dequeue() {
 
 		printf("Lane %d has been selected by police.\n", lane_selected);
 
-		// Find the foremost vehicle in that lane
-		int j=0;
-		while(j<=queue_count) {
-			if(lane_selected == queue[j]) {
-				vehicleID = j;
-				break;
-			}
-			j++;
-		}
-
-		printf("Vehicle %d was sent off from Lane %d\n", vehicleID, lane_selected);
-
-		// PART II - Start
-		// Keep the waiting times of the lanes
-		pthread_mutex_lock(&wait_time_mutex);
-		for(int i=0; i<LANES; i++){
-			if(i != lane_selected){
-				wait_times[i]++;
-			} else {
-				wait_times[i] = 0;
-			}
-		}
-		printf("Lane 0 waited %d seconds after the last dequeue.\n", wait_times[0]);
-		printf("Lane 1 waited %d seconds after the last dequeue.\n", wait_times[1]);
-		printf("Lane 2 waited %d seconds after the last dequeue.\n", wait_times[2]);
-		printf("Lane 3 waited %d seconds after the last dequeue.\n", wait_times[3]);
-		pthread_mutex_unlock(&wait_time_mutex);
-		//  PART II - Finish
-		
-		// Remove that vehicle from the lane
-		queue[vehicleID] = 4;
 		if(lane_selected == 0) { north_count--; }
 		else if(lane_selected == 1) { east_count--; }
 		else if(lane_selected == 2) { south_count--; }
 		else if(lane_selected == 3) { west_count--; }
 
-		if (front == 0 && rear == 0) {
-			front = -1;
-			rear = -1;
+		queue_count--;
+
+		// Deleting from the linked list
+		struct Car *temp;
+		temp = front;
+
+		struct Car *prev;
+
+		// If the lane will be dequeued is in the first position in the list
+		if(temp->lane == lane_selected){
+			front = temp->next;
+			dequeuedVehicleID = temp->id;
+			free(temp);
+			return;
 		}
+
+		// Else, find the first occurence of that lane in the list
+		while(temp != NULL && temp->lane != lane_selected){
+			prev = temp;
+			temp = temp->next;
+		}
+		dequeuedVehicleID = temp->id;
+
+		// If we cannot find, we return
+		if(temp == NULL){
+			return;
+		}
+
+		// If we delete the last element in the list, rear should be updated
+		if(temp == rear){
+			rear = prev;
+		}
+
+		prev->next = temp->next;
+		free(temp);
+
+		printf("Vehicle %d was sent off from Lane %d\n", dequeuedVehicleID, lane_selected);
+
 	}
 
-	return lane_selected;
 }
 
 /* If we decide to dequeue from a different lane, this method decides which lane it will be */
@@ -422,21 +422,6 @@ int dequeue_decision() {
 			decision = 3;
 		}
 	}
-
-	// PART II - Start
-	/* We check the waiting times 
-	 * We check part (c) after checking the (b) part
-	 * because we want a priority of (c), this will overwrite the decision even if (b) holds */
-	if(wait_times[0] >= 20){
-		decision = 0;
-	} else if(wait_times[1] >= 20){
-		decision = 1;
-	} else if(wait_times[2] >= 20){
-		decision = 2;
-	} else if(wait_times[3] >= 20){
-		decision = 3;
-	}
-	//  PART II - Finish
 
 	/* If there is no car in the current lane, or there are at least 5 cars in the other lanes:
 	 * You should switch the lane, we return 4 for this change  */
