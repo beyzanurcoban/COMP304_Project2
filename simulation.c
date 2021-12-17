@@ -27,11 +27,11 @@ time_t start_time;
 time_t current_time;
 time_t finish_time;
 struct timeval get_time;
-// struct tm *current_time_local;
 int lanes_decided = 0;
 int id = 0;
 int queue[MAX];
 int queue_count = 0;
+int wait_times[LANES] = {-1, -1, -1, -1}; // PART II
 
 int north_count = 0;
 int east_count = 0;
@@ -51,6 +51,7 @@ pthread_cond_t new_turn;
 pthread_mutex_t lane_count; // mutex for incrementing decided lane numbers
 pthread_mutex_t queue_mutex; // only one thread can make an operation on the queue
 pthread_mutex_t intersection; // only one car is allowed to pass the intersection
+pthread_mutex_t wait_time_mutex;
 
 // Function Declarations
 int program_init(int argc, char *argv[]);
@@ -101,6 +102,7 @@ int program_init(int argc, char *argv[]) {
 	pthread_mutex_init(&lane_count, NULL);
 	pthread_mutex_init(&queue_mutex, NULL);
 	pthread_mutex_init(&intersection, NULL);
+	pthread_mutex_init(&wait_time_mutex, NULL);
 
 	return 0;
 	
@@ -151,6 +153,7 @@ int main(int argc, char *argv[]) {
 	pthread_mutex_destroy(&lane_count);
 	pthread_mutex_destroy(&queue_mutex);
 	pthread_mutex_destroy(&intersection);
+	pthread_mutex_destroy(&wait_time_mutex);
 
 	return 0;
 
@@ -349,6 +352,23 @@ int dequeue() {
 		}
 
 		printf("Vehicle %d was sent off from Lane %d\n", vehicleID, lane_selected);
+
+		// PART II - Start
+		// Keep the waiting times of the lanes
+		pthread_mutex_lock(&wait_time_mutex);
+		for(int i=0; i<LANES; i++){
+			if(i != lane_selected){
+				wait_times[i]++;
+			} else {
+				wait_times[i] = 0;
+			}
+		}
+		printf("Lane 0 waited %d seconds after the last dequeue.\n", wait_times[0]);
+		printf("Lane 1 waited %d seconds after the last dequeue.\n", wait_times[1]);
+		printf("Lane 2 waited %d seconds after the last dequeue.\n", wait_times[2]);
+		printf("Lane 3 waited %d seconds after the last dequeue.\n", wait_times[3]);
+		pthread_mutex_unlock(&wait_time_mutex);
+		//  PART II - Finish
 		
 		// Remove that vehicle from the lane
 		queue[vehicleID] = 4;
@@ -402,6 +422,21 @@ int dequeue_decision() {
 			decision = 3;
 		}
 	}
+
+	// PART II - Start
+	/* We check the waiting times 
+	 * We check part (c) after checking the (b) part
+	 * because we want a priority of (c), this will overwrite the decision even if (b) holds */
+	if(wait_times[0] >= 20){
+		decision = 0;
+	} else if(wait_times[1] >= 20){
+		decision = 1;
+	} else if(wait_times[2] >= 20){
+		decision = 2;
+	} else if(wait_times[3] >= 20){
+		decision = 3;
+	}
+	//  PART II - Finish
 
 	/* If there is no car in the current lane, or there are at least 5 cars in the other lanes:
 	 * You should switch the lane, we return 4 for this change  */
