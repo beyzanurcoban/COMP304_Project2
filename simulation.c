@@ -45,6 +45,7 @@ struct Car *front = NULL;
 struct Car *rear = NULL;
 
 int wait_times[LANES];
+int north_def_wait = 0;
 
 
 // Mutex, Conditional Variables, Semaphores, Locks
@@ -54,6 +55,7 @@ pthread_cond_t new_turn;
 pthread_mutex_t lane_count; // mutex for incrementing decided lane numbers
 pthread_mutex_t queue_mutex; // only one thread can make an operation on the queue
 pthread_mutex_t intersection; // only one car is allowed to pass the intersection
+pthread_mutex_t north_def_wait_mutex; // used when checking or modifying wait times of lanes
 
 // Function Declarations
 int program_init(int argc, char *argv[]);
@@ -114,6 +116,7 @@ int program_init(int argc, char *argv[]) {
 	pthread_mutex_init(&lane_count, NULL);
 	pthread_mutex_init(&queue_mutex, NULL);
 	pthread_mutex_init(&intersection, NULL);
+	pthread_mutex_init(&north_def_wait_mutex, NULL);
 
 	return 0;
 	
@@ -155,6 +158,7 @@ int main(int argc, char *argv[]) {
 	pthread_mutex_destroy(&lane_count);
 	pthread_mutex_destroy(&queue_mutex);
 	pthread_mutex_destroy(&intersection);
+	pthread_mutex_destroy(&north_def_wait_mutex);
 
 	return 0;
 
@@ -206,14 +210,26 @@ void *lane_func() {
 			// E, S, W is produced with probability p.
 			if(l_id != 0){
 				if(is_occur(p)){
-				printf("At Lane %d, Vehicle %d has arrived.\n", l_id, vehicleID);
-				enqueue(vehicleID, l_id, current_time);
-			}
+					printf("At Lane %d, Vehicle %d has arrived.\n", l_id, vehicleID);
+					enqueue(vehicleID, l_id, current_time);
+					// If no car has arrived to North for the first time since last arrival, 20 sec. definite wait for North
+					pthread_mutex_lock(&north_def_wait_mutex);
+						if(north_def_wait == 0) {
+							north_def_wait = 20;
+							printf("No Vehicle has arrived to North. 20 sec. definite wait at North.\n");
+						}
+					pthread_mutex_unlock(&north_def_wait_mutex);
+				}
 			// N is produces with probability 1-p.
 			} else {
 				if(1-is_occur(p)){
-					printf("At Lane %d, Vehicle %d has arrived.\n", l_id, vehicleID);
-					enqueue(vehicleID, l_id, current_time);
+					pthread_mutex_lock(&north_def_wait_mutex);
+						// If 20 sec. wait time is over, new car can arrive at North.
+						if(north_def_wait == 0) {
+							printf("At Lane %d, Vehicle %d has arrived.\n", l_id, vehicleID);
+							enqueue(vehicleID, l_id, current_time);
+						}
+					pthread_mutex_unlock(&north_def_wait_mutex);
 				}
 			}
 		pthread_mutex_unlock(&queue_mutex);
@@ -221,7 +237,6 @@ void *lane_func() {
 		pthread_mutex_lock(&lane_count);
 			lanes_decided++;
 		pthread_mutex_unlock(&lane_count);
-
 
 	}
 	pthread_exit(0);
@@ -247,6 +262,14 @@ void *police_func() {
 		pthread_mutex_lock(&police_checking);
 			pthread_cond_broadcast(&new_turn);
 		pthread_mutex_unlock(&police_checking);
+
+		// If North has started to count down from 20 sec, keep going.
+		pthread_mutex_lock(&north_def_wait_mutex);
+			if(north_def_wait != 0) {
+				north_def_wait--;
+				printf("North's wait time: %d\n", north_def_wait);
+			}
+		pthread_mutex_unlock(&north_def_wait_mutex);
 
 		// Wait for all the lanes finish their operations. (Decide whether to put a vehicle to the lane or not)
 		while(lanes_decided != LANES); // busy wait
