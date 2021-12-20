@@ -47,6 +47,11 @@ struct Car *rear = NULL;
 int wait_times[LANES];
 int north_def_wait = 0;
 
+FILE *car_fp;
+struct tm *arr_info;
+struct tm *leave_info;
+char arr_time[64];
+char leave_time[64];
 
 // Mutex, Conditional Variables, Semaphores, Locks
 pthread_mutex_t police_checking;
@@ -68,6 +73,7 @@ void dequeue();
 int from_diff_lane();
 int dequeue_decision();
 void decide_wait_times();
+void keep_car_log(struct Car *temp, int lane_num);
 
 struct Car {
 	int id;
@@ -127,6 +133,10 @@ int main(int argc, char *argv[]) {
 
 	program_init(argc, argv);
 	srand(7); // initialize random number generator seed
+
+	// Open the log files
+	car_fp = fopen("car.log", "w");
+	fprintf(car_fp, "CarID\t\tDirection\t\tArrival-Time\t\tCross-Time\t\tWait-Time\n");
 
 	// At the beginnin, there are one vehicle at each lane, queue[0] means there is a car in N lane
 	enqueue(vehicleID, 0, start_time);
@@ -391,6 +401,9 @@ void dequeue() {
 		if(temp->lane == lane_selected){
 			front = temp->next;
 			dequeuedVehicleID = temp->id;
+			temp->leave_time = temp->arrive_time + temp->waiting;
+
+			keep_car_log(temp, lane_selected);
 			free(temp);
 			return;
 		}
@@ -413,12 +426,27 @@ void dequeue() {
 		}
 
 		prev->next = temp->next;
-		free(temp);
+		temp->leave_time = temp->arrive_time + temp->waiting;
 
+		keep_car_log(temp, lane_selected);
+		free(temp);
+		
 		printf("Vehicle %d was sent off from Lane %d\n", dequeuedVehicleID, lane_selected);
 
 	}
 
+}
+
+/* Method to write the car.log file */
+void keep_car_log(struct Car *temp, int lane_num) {
+	// Convert the arrive time to the desired hour:minute:second format
+	arr_info = localtime(&temp->arrive_time);
+	strftime (arr_time, sizeof arr_time, "%H:%M:%S", arr_info);
+	// Convert the leave time to the desired hour:minute:second format
+	leave_info = localtime(&temp->leave_time);
+	strftime (leave_time, sizeof leave_time, "%H:%M:%S", leave_info);
+	// Write the car info
+	fprintf(car_fp, "%d\t\t\t%d\t\t\t\t%s\t\t\t%s\t\t%d\n", dequeuedVehicleID, lane_num, arr_time, leave_time, temp->waiting);
 }
 
 /* If we decide to dequeue from a different lane, this method decides which lane it will be */
