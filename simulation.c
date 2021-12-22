@@ -30,6 +30,14 @@ struct timeval get_time;
 int lanes_decided = 0;
 int id = 0;
 
+int t;	// Command Line argument t
+int sim_counter = 0;
+struct tm *time_info;
+char time_char[64];
+
+int phone_counter = 0;	// count of cell phone occurences
+int is_police_sleep = 0;	// Police sleep boolean
+
 int north_count = 0;
 int east_count = 0;
 int south_count = 0;
@@ -72,6 +80,7 @@ pthread_mutex_t intersection; // only one car is allowed to pass the intersectio
 pthread_mutex_t north_def_wait_mutex; // used when checking or modifying wait times of lanes
 pthread_mutex_t police_sleep_mutex; // used to keep police sleep counter intact
 pthread_cond_t police_wakes_up; // used for 3 sec. sleep of police in case no car is around.
+pthread_mutex_t sim_counter_mutex; // used for time intervals
 
 // Function Declarations
 int program_init(int argc, char *argv[]);
@@ -98,10 +107,10 @@ struct Car {
 
 int program_init(int argc, char *argv[]) {
 	/* Taking input arguments from the user:
-    * -s $(total simulation time) -p $(probability)
+    * -s $(total simulation time) -p $(probability) -t $(time interval)
     */
 
-    if(argc != 5) {
+    if(argc != 7) {
         perror("Not valid number of argument to run the program\n");
         return -1;
     }
@@ -109,15 +118,18 @@ int program_init(int argc, char *argv[]) {
     for(int i=1; i<argc; i+=2) {
         if(strcmp("-s", argv[i]) == 0) {
             sim_time = atoi(argv[i+1]);
-        } else if (strcmp("-p",argv[i]) == 0) {
+        } else if(strcmp("-p",argv[i]) == 0) {
             p = strtod(argv[i+1], NULL);
-        } else {
+        } else if(strcmp("-t", argv[i]) == 0){
+			t = atoi(argv[i+1]);
+		} else {
             perror("You specified an undefined flag!\n");
             return -1;
         }
     }
 
     printf("Simulation Time:\t%d seconds\nProbability:\t%f\n", sim_time, p);
+	printf("We will provide the snapshots of the intersection every %d seconds.\n", t);
 	
 	// Get the current time in seconds, decide start time and calculate finish time
     gettimeofday(&get_time, NULL);
@@ -141,6 +153,7 @@ int program_init(int argc, char *argv[]) {
 	pthread_mutex_init(&intersection, NULL);
 	pthread_mutex_init(&north_def_wait_mutex, NULL);
 	pthread_cond_init(&police_wakes_up, NULL);
+	pthread_mutex_init(&sim_counter_mutex, NULL);
 
 	fclose(car_fp);
 	fclose(police_fp);
@@ -195,6 +208,7 @@ int main(int argc, char *argv[]) {
 	pthread_mutex_destroy(&intersection);
 	pthread_mutex_destroy(&north_def_wait_mutex);
 	pthread_cond_destroy(&police_wakes_up);
+	pthread_mutex_destroy(&sim_counter_mutex);
 
 	return 0;
 
@@ -343,6 +357,18 @@ void *police_func() {
 		while(lanes_decided != LANES); // busy wait
 		printf("All lanes have completed their actions.\n");
 
+		pthread_mutex_lock(&sim_counter_mutex);
+			if((sim_counter % t == 0 || sim_counter % t == 1 || sim_counter % t == 2) && sim_counter != 0 && sim_counter != 1 && sim_counter != 2){
+				time_info = localtime(&current_time);
+				strftime (time_char, sizeof time_char, "At %H:%M:%S:\n", time_info);
+				printf("%s", time_char);
+
+				printf("\t%d\n", north_count);
+				printf("%d\t\t%d\n", west_count, east_count);
+				printf("\t%d\n", south_count);
+			}
+		pthread_mutex_unlock(&sim_counter_mutex);
+
 		pthread_mutex_lock(&police_sleep_mutex);
 			if(is_police_sleep == 1){
 				printf("Police was playing on his phone.\n");
@@ -393,6 +419,10 @@ void *police_func() {
 		// Car from decided lane passes
 		printf("\n");
 		pthread_sleep(1);
+
+		pthread_mutex_lock(&sim_counter_mutex);
+			sim_counter++;
+		pthread_mutex_unlock(&sim_counter_mutex);
 
 	}
 	
