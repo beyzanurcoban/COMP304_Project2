@@ -391,8 +391,6 @@ void *police_func() {
 			if(is_police_sleep == 1){
 				printf("Police was playing on his phone.\n");
 				pthread_cond_wait(&police_wakes_up, &police_sleep_mutex);
-				printf("Police got a HONK, he will sleep 3 secs.\n");
-				// pthread_sleep(3);
 			}
 		pthread_mutex_unlock(&police_sleep_mutex);
 

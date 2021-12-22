@@ -16,8 +16,9 @@ gcc simulation.c -o simulation -lpthread
 ## Executing
 
 Use the following command to execute the program. -s flag determines the simulation time, -p flag determines the\
-probability for the vehicle creation.
+probability for the vehicle creation. -t flag determines the time intervals in which we print snapshots of the\
+current lane counts in a diamond shaped fashion.
 
 ```bash
-./simulation -s 5 -p 0.565
+./simulation -s 20 -p 0.2 -t 7
 ```
