@@ -30,6 +30,14 @@ struct timeval get_time;
 int lanes_decided = 0;
 int id = 0;
 
+int t;	// Command Line argument t
+int sim_counter = 0;
+struct tm *time_info;
+char time_char[64];
+
+int phone_counter = 0;	// count of cell phone occurences
+int is_police_sleep = 0;	// Police sleep boolean
+
 int north_count = 0;
 int east_count = 0;
 int south_count = 0;
@@ -47,14 +55,17 @@ struct Car *rear = NULL;
 int wait_times[LANES];
 int north_def_wait = 0;
 
-int police_sleep_time = 0;
-
 FILE *car_fp;
 struct tm *arr_info;
 struct tm *leave_info;
-struct tm *cur_info;
 char arr_time[64];
 char leave_time[64];
+
+FILE *police_fp;
+struct tm *event_info;
+char event_time[64];
+
+struct tm *cur_info;
 char cur_time[64];
 
 // Mutex, Conditional Variables, Semaphores, Locks
@@ -67,6 +78,8 @@ pthread_mutex_t intersection; // only one car is allowed to pass the intersectio
 pthread_mutex_t north_def_wait_mutex; // used when checking or modifying wait times of lanes
 pthread_mutex_t police_sleep_mutex; // used to keep police sleep counter intact
 pthread_cond_t police_wakes_up; // used for 3 sec. sleep of police in case no car is around.
+pthread_mutex_t sim_counter_mutex; // used for time intervals
+pthread_mutex_t phone_counter_mutex;
 
 // Function Declarations
 int program_init(int argc, char *argv[]);
@@ -80,6 +93,7 @@ int from_diff_lane();
 int dequeue_decision();
 void decide_wait_times();
 void keep_car_log(struct Car *temp, int lane_num);
+void keep_police_log(int event, char log_time[]);
 
 struct Car {
 	int id;
@@ -92,10 +106,10 @@ struct Car {
 
 int program_init(int argc, char *argv[]) {
 	/* Taking input arguments from the user:
-    * -s $(total simulation time) -p $(probability)
+    * -s $(total simulation time) -p $(probability) -t $(time interval)
     */
 
-    if(argc != 5) {
+    if(argc != 7) {
         perror("Not valid number of argument to run the program\n");
         return -1;
     }
@@ -103,15 +117,18 @@ int program_init(int argc, char *argv[]) {
     for(int i=1; i<argc; i+=2) {
         if(strcmp("-s", argv[i]) == 0) {
             sim_time = atoi(argv[i+1]);
-        } else if (strcmp("-p",argv[i]) == 0) {
+        } else if(strcmp("-p",argv[i]) == 0) {
             p = strtod(argv[i+1], NULL);
-        } else {
+        } else if(strcmp("-t", argv[i]) == 0){
+			t = atoi(argv[i+1]);
+		} else {
             perror("You specified an undefined flag!\n");
             return -1;
         }
     }
 
     printf("Simulation Time:\t%d seconds\nProbability:\t%f\n", sim_time, p);
+	printf("We will provide the snapshots of the intersection every %d seconds.\n", t);
 	
 	// Get the current time in seconds, decide start time and calculate finish time
     gettimeofday(&get_time, NULL);
@@ -135,7 +152,11 @@ int program_init(int argc, char *argv[]) {
 	pthread_mutex_init(&intersection, NULL);
 	pthread_mutex_init(&north_def_wait_mutex, NULL);
 	pthread_cond_init(&police_wakes_up, NULL);
+	pthread_mutex_init(&sim_counter_mutex, NULL);
+	pthread_mutex_init(&phone_counter_mutex, NULL);
 
+	fclose(car_fp);
+	fclose(police_fp);
 
 	return 0;
 	
@@ -150,6 +171,8 @@ int main(int argc, char *argv[]) {
 	// Open the log files
 	car_fp = fopen("car.log", "w");
 	fprintf(car_fp, "CarID\t\tDirection\t\tArrival-Time\t\tCross-Time\t\tWait-Time\n");
+	police_fp = fopen("police.log", "w");
+	fprintf(police_fp, "Time\t\tEvent\n");
 
 	// At the beginning, there are one vehicle at each lane, queue[0] means there is a car in N lane
 	enqueue(vehicleID, 0, start_time);
@@ -173,6 +196,8 @@ int main(int argc, char *argv[]) {
     }
 
 	pthread_join(police, NULL);
+
+	printf("\nSIMULATION IS DONE!!!\n");
 	
 	/* Destroy mutex */
 	pthread_mutex_destroy(&police_checking);
@@ -183,6 +208,8 @@ int main(int argc, char *argv[]) {
 	pthread_mutex_destroy(&intersection);
 	pthread_mutex_destroy(&north_def_wait_mutex);
 	pthread_cond_destroy(&police_wakes_up);
+	pthread_mutex_destroy(&sim_counter_mutex);
+	pthread_mutex_destroy(&phone_counter_mutex);
 
 	return 0;
 
@@ -229,29 +256,26 @@ void *lane_func() {
 		// Keep the queue mutex, so there will not be two different operation at the same time on the queue.
 		// Police cannot dequeue while the cars are enqueued.
 		pthread_mutex_lock(&queue_mutex);
-			printf("Hi! This is Lane %d.\n", l_id);
+			//printf("Hi! This is Lane %d.\n", l_id);
 
 			// E, S, W is produced with probability p.
 			if(l_id != 0){
 				if(is_occur(p)){
 					printf("At Lane %d, Vehicle %d has arrived.\n", l_id, vehicleID);
-					enqueue(vehicleID, l_id, current_time);
 
-					// HONK! if Police is playing with his phone.
 					pthread_mutex_lock(&police_sleep_mutex);
-						if(police_sleep_time == 4) {
-							printf("HONK!!!\n");
+						if(queue_count == 0){
 							pthread_cond_signal(&police_wakes_up);
+							printf("HONK!!\n");
+							keep_police_log(1, cur_time);
+							pthread_mutex_lock(&phone_counter_mutex);
+								is_police_sleep = 1;
+								phone_counter = 3;
+							pthread_mutex_unlock(&phone_counter_mutex);
 						}
 					pthread_mutex_unlock(&police_sleep_mutex);
 
-					// If no car has arrived to North for the first time since last arrival, 20 sec. definite wait for North
-					pthread_mutex_lock(&north_def_wait_mutex);
-						if(north_def_wait == 0) {
-							north_def_wait = 20;
-							printf("No Vehicle has arrived to North. 20 sec. definite wait at North.\n");
-						}
-					pthread_mutex_unlock(&north_def_wait_mutex);
+					enqueue(vehicleID, l_id, current_time);
 				}
 			// N is produces with probability 1-p.
 			} else {
@@ -260,16 +284,28 @@ void *lane_func() {
 						// If 20 sec. wait time is over, new car can arrive at North.
 						if(north_def_wait == 0) {
 							printf("At Lane %d, Vehicle %d has arrived.\n", l_id, vehicleID);
-							enqueue(vehicleID, l_id, current_time);
-			
-							// HONK! if Police is playing with his phone.
+
 							pthread_mutex_lock(&police_sleep_mutex);
-								if(police_sleep_time == 4) {
-									printf("HONK!!!\n");
+								if(queue_count == 0){
 									pthread_cond_signal(&police_wakes_up);
+									printf("HONK!!\n");
+									keep_police_log(1, cur_time);
+									pthread_mutex_lock(&phone_counter_mutex);
+										is_police_sleep = 1;
+										phone_counter = 3;
+									pthread_mutex_unlock(&phone_counter_mutex);
 								}
 							pthread_mutex_unlock(&police_sleep_mutex);
 
+							enqueue(vehicleID, l_id, current_time);
+						}
+					pthread_mutex_unlock(&north_def_wait_mutex);
+				} else {
+					// If no car has arrived to North for the first time since last arrival, 20 sec. definite wait for North
+					pthread_mutex_lock(&north_def_wait_mutex);
+						if(north_def_wait == 0) {
+							north_def_wait = 20;
+							printf("No Vehicle has arrived to North. 20 sec. definite wait at North.\n");
 						}
 					pthread_mutex_unlock(&north_def_wait_mutex);
 				}
@@ -298,45 +334,17 @@ void *police_func() {
 
 		// After 1 second, we dequeued a car and we show it.
 		pthread_mutex_lock(&queue_mutex);
-			if(last_dequeued_lane != 4 && queue_count != 0){
+			if(last_dequeued_lane != 4){
 				printf("Vehicle %d from the lane %d finished their passing process in 1 second.\n", dequeuedVehicleID, last_dequeued_lane);
 			}
 		pthread_mutex_unlock(&queue_mutex);
 
-		// Notify the lanes that there is a police on the simulation.
-		printf("Hi! This is The Police.\n");
-		pthread_mutex_lock(&police_checking);
-			pthread_cond_broadcast(&new_turn);
-		pthread_mutex_unlock(&police_checking);
 
-		// PART III - Start
-		// Police wakes up in 3 seconds here.
 		pthread_mutex_lock(&police_sleep_mutex);
-			if(police_sleep_time > 0) {
-				police_sleep_time--;
-				pthread_mutex_lock(&police_checking);
-					pthread_cond_broadcast(&new_turn);
-				pthread_mutex_unlock(&police_checking);
+			if(queue_count == 0){
+				keep_police_log(0, cur_time);
 			}
 		pthread_mutex_unlock(&police_sleep_mutex);
-
-		// If no car is around, set 3 sec. police sleep.
-		pthread_mutex_lock(&queue_mutex);
-			if(queue_count == 0) {
-				printf("No car in any lane. Police is playing with his phone.\n");
-				pthread_mutex_lock(&police_sleep_mutex);
-					police_sleep_time = 4;
-				pthread_mutex_unlock(&police_sleep_mutex);
-			}
-		pthread_mutex_unlock(&queue_mutex);
-
-		// Wait for a HONK! here.
-		pthread_mutex_lock(&police_sleep_mutex);
-			if(police_sleep_time == 4) {
-				pthread_cond_wait(&police_wakes_up, &police_sleep_mutex);
-			}
-		pthread_mutex_unlock(&police_sleep_mutex);
-		// PART III - End
 
 		// If North has started to count down from 20 sec, keep going.
 		pthread_mutex_lock(&north_def_wait_mutex);
@@ -346,43 +354,71 @@ void *police_func() {
 			}
 		pthread_mutex_unlock(&north_def_wait_mutex);
 
+		// Notify the lanes that there is a police on the simulation.
+		//printf("Hi! This is The Police.\n");
+		pthread_mutex_lock(&police_checking);
+			pthread_cond_broadcast(&new_turn);
+		pthread_mutex_unlock(&police_checking);
+
 		// Wait for all the lanes finish their operations. (Decide whether to put a vehicle to the lane or not)
 		while(lanes_decided != LANES); // busy wait
 		printf("All lanes have completed their actions.\n");
 
-		// Dequeue
-		// Vehicles wait for the signal from the police officer to pass the intersection
-		pthread_mutex_lock(&intersection);
+		pthread_mutex_lock(&sim_counter_mutex);
+			if((sim_counter % t == 0 || sim_counter % t == 1 || sim_counter % t == 2) && sim_counter != 0 && sim_counter != 1 && sim_counter != 2){
+				time_info = localtime(&current_time);
+				strftime (time_char, sizeof time_char, "At %H:%M:%S:\n", time_info);
+				printf("%s", time_char);
 
-			// Visualize Queue Before A Vehicle is Let Off
-			pthread_mutex_lock(&queue_mutex);
-				printf("Queue Before (%d):\t", queue_count);
-				struct Car *before = front;
-				while(before != NULL){
-					printf(" %d", before->lane);
-					before = before->next;
-				}
-				printf("\n");
-			pthread_mutex_unlock(&queue_mutex);
+				printf("\t%d\n", north_count);
+				printf("%d\t\t%d\n", west_count, east_count);
+				printf("\t%d\n", south_count);
+			}
+		pthread_mutex_unlock(&sim_counter_mutex);
 
-			// A Vehicle is Let Off
-			pthread_mutex_lock(&police_sleep_mutex);
-				if(police_sleep_time == 0) {
-					pthread_mutex_lock(&queue_mutex);
-						dequeue();
-					pthread_mutex_unlock(&queue_mutex);
-				} else if(police_sleep_time == 1 || police_sleep_time == 2 || police_sleep_time == 3) {
-					printf("Police is putting his phone away... in %d second(s).\n", police_sleep_time);
-				}
-			pthread_mutex_unlock(&police_sleep_mutex);
+		// Visualize Queue Before A Vehicle is Let Off
+		pthread_mutex_lock(&queue_mutex);
+			printf("Queue Before (%d):\t", queue_count);
+			struct Car *before = front;
+			while(before != NULL){
+				printf(" %d", before->lane);
+				before = before->next;
+			}
+			printf("\n");
+		pthread_mutex_unlock(&queue_mutex);
 
-		pthread_mutex_unlock(&intersection);
+		pthread_mutex_lock(&police_sleep_mutex);
+			if(is_police_sleep == 1){
+				printf("Police was playing on his phone.\n");
+				pthread_cond_wait(&police_wakes_up, &police_sleep_mutex);
+				printf("Police got a HONK, he will sleep 3 secs.\n");
+				// pthread_sleep(3);
+			}
+		pthread_mutex_unlock(&police_sleep_mutex);
+
+		pthread_mutex_lock(&queue_mutex);
+		pthread_mutex_lock(&phone_counter_mutex);
+			if(phone_counter == 0 && queue_count != 0) {
+				// Dequeue
+				// Vehicles wait for the signal from the police officer to pass the intersection
+				pthread_mutex_lock(&intersection);
+
+					// A Vehicle is Let Off
+					dequeue();
+					is_police_sleep = 0;
+
+				pthread_mutex_unlock(&intersection);
+		} else {
+			phone_counter--;
+		}
+		pthread_mutex_unlock(&phone_counter_mutex);
+		pthread_mutex_unlock(&queue_mutex);
 
 		// Reset Lane Decision Count
 		pthread_mutex_lock(&lane_count);
 			lanes_decided = 0;
 		pthread_mutex_unlock(&lane_count);
-		
+
 		// Visualize Queue After A Car is Sent Off
 		pthread_mutex_lock(&queue_mutex);
 			printf("Queue After (%d):\t", queue_count);
@@ -398,6 +434,10 @@ void *police_func() {
 		printf("\n");
 		pthread_sleep(1);
 
+		pthread_mutex_lock(&sim_counter_mutex);
+			sim_counter++;
+		pthread_mutex_unlock(&sim_counter_mutex);
+
 	}
 	
 	pthread_exit(0);
@@ -409,7 +449,7 @@ void enqueue(int id, int lane, long a_time) {
 	newCar->id = id;
 	newCar->arrive_time = a_time;
 	newCar->lane = lane;
-	newCar->waiting = 0;
+	newCar->waiting = -1;
 	newCar->next = NULL;
 
 	if(front == NULL){
@@ -458,7 +498,12 @@ void dequeue() {
 		// Increase the waiting times of the cars in the list
 		struct Car *waitCar = front;
 		while(waitCar != NULL){
-			waitCar->waiting = waitCar->waiting+1;
+			if(is_police_sleep == 1){
+				waitCar->waiting = waitCar->waiting+4;
+			} else {
+				waitCar->waiting = waitCar->waiting+1;
+			}
+			
 			waitCar = waitCar->next;
 		}
 
@@ -529,6 +574,17 @@ void keep_car_log(struct Car *temp, int lane_num) {
 	fprintf(car_fp, "%d\t\t\t%d\t\t\t\t%s\t\t\t%s\t\t%d\n", dequeuedVehicleID, lane_num, arr_time, leave_time, temp->waiting);
 }
 
+/* Method to write the police.log file */
+void keep_police_log(int event, char log_time[]) {
+	if(event == 0) {
+		// Police starts playing with his cell phone.
+		fprintf(police_fp, "%s\t\tCell Phone\n", log_time);
+	} else if(event == 1) {
+		// A car honks at Police.
+		fprintf(police_fp, "%s\t\tHonk\n", log_time);
+	}
+}
+
 /* If we decide to dequeue from a different lane, this method decides which lane it will be */
 int from_diff_lane(){
 	int lane_selected = 0;
@@ -571,10 +627,10 @@ int dequeue_decision() {
 	 * We check part (c) after checking the (b) part
 	 * because we want a priority of (c), this will overwrite the decision even if (b) holds */
 	decide_wait_times();
-	printf("Lane 0 waited %d seconds after the last dequeue.\n", wait_times[0]);
-	printf("Lane 1 waited %d seconds after the last dequeue.\n", wait_times[1]);
-	printf("Lane 2 waited %d seconds after the last dequeue.\n", wait_times[2]);
-	printf("Lane 3 waited %d seconds after the last dequeue.\n", wait_times[3]);
+	// printf("Lane 0 waited %d seconds after the last dequeue.\n", wait_times[0]);
+	// printf("Lane 1 waited %d seconds after the last dequeue.\n", wait_times[1]);
+	// printf("Lane 2 waited %d seconds after the last dequeue.\n", wait_times[2]);
+	// printf("Lane 3 waited %d seconds after the last dequeue.\n", wait_times[3]);
 
 	if(wait_times[0] >= 20){
 		decision = 0;
