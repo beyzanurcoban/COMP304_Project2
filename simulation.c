@@ -55,8 +55,6 @@ struct Car *rear = NULL;
 int wait_times[LANES];
 int north_def_wait = 0;
 
-int is_police_sleep = 0;
-
 FILE *car_fp;
 struct tm *arr_info;
 struct tm *leave_info;
@@ -374,7 +372,7 @@ void *police_func() {
 				printf("Police was playing on his phone.\n");
 				pthread_cond_wait(&police_wakes_up, &police_sleep_mutex);
 				printf("Police got a HONK, he will sleep 3 secs.\n");
-				pthread_sleep(3);
+				// pthread_sleep(3);
 			}
 		pthread_mutex_unlock(&police_sleep_mutex);
 
