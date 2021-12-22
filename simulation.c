@@ -142,6 +142,8 @@ int program_init(int argc, char *argv[]) {
 	pthread_mutex_init(&north_def_wait_mutex, NULL);
 	pthread_cond_init(&police_wakes_up, NULL);
 
+	fclose(car_fp);
+	fclose(police_fp);
 
 	return 0;
 	
@@ -239,7 +241,7 @@ void *lane_func() {
 		// Keep the queue mutex, so there will not be two different operation at the same time on the queue.
 		// Police cannot dequeue while the cars are enqueued.
 		pthread_mutex_lock(&queue_mutex);
-			printf("Hi! This is Lane %d.\n", l_id);
+			//printf("Hi! This is Lane %d.\n", l_id);
 
 			// E, S, W is produced with probability p.
 			if(l_id != 0){
@@ -316,11 +318,12 @@ void *police_func() {
 			}
 		pthread_mutex_unlock(&queue_mutex);
 
-		// Notify the lanes that there is a police on the simulation.
-		printf("Hi! This is The Police.\n");
-		pthread_mutex_lock(&police_checking);
-			pthread_cond_broadcast(&new_turn);
-		pthread_mutex_unlock(&police_checking);
+
+		pthread_mutex_lock(&police_sleep_mutex);
+			if(queue_count == 0){
+				keep_police_log(0, cur_time);
+			}
+		pthread_mutex_unlock(&police_sleep_mutex);
 
 		// If North has started to count down from 20 sec, keep going.
 		pthread_mutex_lock(&north_def_wait_mutex);
@@ -330,15 +333,15 @@ void *police_func() {
 			}
 		pthread_mutex_unlock(&north_def_wait_mutex);
 
+		// Notify the lanes that there is a police on the simulation.
+		//printf("Hi! This is The Police.\n");
+		pthread_mutex_lock(&police_checking);
+			pthread_cond_broadcast(&new_turn);
+		pthread_mutex_unlock(&police_checking);
+
 		// Wait for all the lanes finish their operations. (Decide whether to put a vehicle to the lane or not)
 		while(lanes_decided != LANES); // busy wait
 		printf("All lanes have completed their actions.\n");
-
-		pthread_mutex_lock(&police_sleep_mutex);
-			if(queue_count == 0){
-				keep_police_log(0, cur_time);
-			}
-		pthread_mutex_unlock(&police_sleep_mutex);
 
 		pthread_mutex_lock(&police_sleep_mutex);
 			if(is_police_sleep == 1){
