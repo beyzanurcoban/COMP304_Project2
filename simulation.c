@@ -79,6 +79,7 @@ pthread_mutex_t north_def_wait_mutex; // used when checking or modifying wait ti
 pthread_mutex_t police_sleep_mutex; // used to keep police sleep counter intact
 pthread_cond_t police_wakes_up; // used for 3 sec. sleep of police in case no car is around.
 pthread_mutex_t sim_counter_mutex; // used for time intervals
+pthread_mutex_t phone_counter_mutex;
 
 // Function Declarations
 int program_init(int argc, char *argv[]);
@@ -152,6 +153,7 @@ int program_init(int argc, char *argv[]) {
 	pthread_mutex_init(&north_def_wait_mutex, NULL);
 	pthread_cond_init(&police_wakes_up, NULL);
 	pthread_mutex_init(&sim_counter_mutex, NULL);
+	pthread_mutex_init(&phone_counter_mutex, NULL);
 
 	fclose(car_fp);
 	fclose(police_fp);
@@ -207,6 +209,7 @@ int main(int argc, char *argv[]) {
 	pthread_mutex_destroy(&north_def_wait_mutex);
 	pthread_cond_destroy(&police_wakes_up);
 	pthread_mutex_destroy(&sim_counter_mutex);
+	pthread_mutex_destroy(&phone_counter_mutex);
 
 	return 0;
 
@@ -265,7 +268,10 @@ void *lane_func() {
 							pthread_cond_signal(&police_wakes_up);
 							printf("HONK!!\n");
 							keep_police_log(1, cur_time);
-							is_police_sleep = 1;
+							pthread_mutex_lock(&phone_counter_mutex);
+								is_police_sleep = 1;
+								phone_counter = 3;
+							pthread_mutex_unlock(&phone_counter_mutex);
 						}
 					pthread_mutex_unlock(&police_sleep_mutex);
 
@@ -284,7 +290,10 @@ void *lane_func() {
 									pthread_cond_signal(&police_wakes_up);
 									printf("HONK!!\n");
 									keep_police_log(1, cur_time);
-									is_police_sleep = 1;
+									pthread_mutex_lock(&phone_counter_mutex);
+										is_police_sleep = 1;
+										phone_counter = 3;
+									pthread_mutex_unlock(&phone_counter_mutex);
 								}
 							pthread_mutex_unlock(&police_sleep_mutex);
 
@@ -367,6 +376,17 @@ void *police_func() {
 			}
 		pthread_mutex_unlock(&sim_counter_mutex);
 
+		// Visualize Queue Before A Vehicle is Let Off
+		pthread_mutex_lock(&queue_mutex);
+			printf("Queue Before (%d):\t", queue_count);
+			struct Car *before = front;
+			while(before != NULL){
+				printf(" %d", before->lane);
+				before = before->next;
+			}
+			printf("\n");
+		pthread_mutex_unlock(&queue_mutex);
+
 		pthread_mutex_lock(&police_sleep_mutex);
 			if(is_police_sleep == 1){
 				printf("Police was playing on his phone.\n");
@@ -376,33 +396,29 @@ void *police_func() {
 			}
 		pthread_mutex_unlock(&police_sleep_mutex);
 
-		// Dequeue
-		// Vehicles wait for the signal from the police officer to pass the intersection
-		pthread_mutex_lock(&intersection);
+		pthread_mutex_lock(&queue_mutex);
+		pthread_mutex_lock(&phone_counter_mutex);
+			if(phone_counter == 0 && queue_count != 0) {
+				// Dequeue
+				// Vehicles wait for the signal from the police officer to pass the intersection
+				pthread_mutex_lock(&intersection);
 
-			// Visualize Queue Before A Vehicle is Let Off
-			pthread_mutex_lock(&queue_mutex);
-				printf("Queue Before (%d):\t", queue_count);
-				struct Car *before = front;
-				while(before != NULL){
-					printf(" %d", before->lane);
-					before = before->next;
-				}
-				printf("\n");
-			pthread_mutex_unlock(&queue_mutex);
+					// A Vehicle is Let Off
+					dequeue();
+					is_police_sleep = 0;
 
-			// A Vehicle is Let Off
-			pthread_mutex_lock(&queue_mutex);
-				dequeue();
-				is_police_sleep = 0;
-			pthread_mutex_unlock(&queue_mutex);
-		pthread_mutex_unlock(&intersection);
+				pthread_mutex_unlock(&intersection);
+		} else {
+			phone_counter--;
+		}
+		pthread_mutex_unlock(&phone_counter_mutex);
+		pthread_mutex_unlock(&queue_mutex);
 
 		// Reset Lane Decision Count
 		pthread_mutex_lock(&lane_count);
 			lanes_decided = 0;
 		pthread_mutex_unlock(&lane_count);
-		
+
 		// Visualize Queue After A Car is Sent Off
 		pthread_mutex_lock(&queue_mutex);
 			printf("Queue After (%d):\t", queue_count);
