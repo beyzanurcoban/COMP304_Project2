@@ -52,9 +52,14 @@ int is_police_sleep = 0;
 FILE *car_fp;
 struct tm *arr_info;
 struct tm *leave_info;
-struct tm *cur_info;
 char arr_time[64];
 char leave_time[64];
+
+FILE *police_fp;
+struct tm *event_info;
+char event_time[64];
+
+struct tm *cur_info;
 char cur_time[64];
 
 // Mutex, Conditional Variables, Semaphores, Locks
@@ -80,6 +85,7 @@ int from_diff_lane();
 int dequeue_decision();
 void decide_wait_times();
 void keep_car_log(struct Car *temp, int lane_num);
+void keep_police_log(int event, char log_time[]);
 
 struct Car {
 	int id;
@@ -150,6 +156,8 @@ int main(int argc, char *argv[]) {
 	// Open the log files
 	car_fp = fopen("car.log", "w");
 	fprintf(car_fp, "CarID\t\tDirection\t\tArrival-Time\t\tCross-Time\t\tWait-Time\n");
+	police_fp = fopen("police.log", "w");
+	fprintf(police_fp, "Time\t\tEvent\n");
 
 	// At the beginning, there are one vehicle at each lane, queue[0] means there is a car in N lane
 	enqueue(vehicleID, 0, start_time);
@@ -242,6 +250,7 @@ void *lane_func() {
 						if(queue_count == 0){
 							pthread_cond_signal(&police_wakes_up);
 							printf("HONK!!\n");
+							keep_police_log(1, cur_time);
 							is_police_sleep = 1;
 						}
 					pthread_mutex_unlock(&police_sleep_mutex);
@@ -260,6 +269,7 @@ void *lane_func() {
 								if(queue_count == 0){
 									pthread_cond_signal(&police_wakes_up);
 									printf("HONK!!\n");
+									keep_police_log(1, cur_time);
 									is_police_sleep = 1;
 								}
 							pthread_mutex_unlock(&police_sleep_mutex);
@@ -323,6 +333,12 @@ void *police_func() {
 		// Wait for all the lanes finish their operations. (Decide whether to put a vehicle to the lane or not)
 		while(lanes_decided != LANES); // busy wait
 		printf("All lanes have completed their actions.\n");
+
+		pthread_mutex_lock(&police_sleep_mutex);
+			if(queue_count == 0){
+				keep_police_log(0, cur_time);
+			}
+		pthread_mutex_unlock(&police_sleep_mutex);
 
 		pthread_mutex_lock(&police_sleep_mutex);
 			if(is_police_sleep == 1){
@@ -509,6 +525,17 @@ void keep_car_log(struct Car *temp, int lane_num) {
 	strftime (leave_time, sizeof leave_time, "%H:%M:%S", leave_info);
 	// Write the car info
 	fprintf(car_fp, "%d\t\t\t%d\t\t\t\t%s\t\t\t%s\t\t%d\n", dequeuedVehicleID, lane_num, arr_time, leave_time, temp->waiting);
+}
+
+/* Method to write the police.log file */
+void keep_police_log(int event, char log_time[]) {
+	if(event == 0) {
+		// Police starts playing with his cell phone.
+		fprintf(police_fp, "%s\t\tCell Phone\n", log_time);
+	} else if(event == 1) {
+		// A car honks at Police.
+		fprintf(police_fp, "%s\t\tHonk\n", log_time);
+	}
 }
 
 /* If we decide to dequeue from a different lane, this method decides which lane it will be */
