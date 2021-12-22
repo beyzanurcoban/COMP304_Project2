@@ -68,6 +68,8 @@ char event_time[64];
 struct tm *cur_info;
 char cur_time[64];
 
+char lane_char;
+
 // Mutex, Conditional Variables, Semaphores, Locks
 pthread_mutex_t police_checking;
 pthread_mutex_t id_mutex;
@@ -172,7 +174,7 @@ int main(int argc, char *argv[]) {
 	car_fp = fopen("car.log", "w");
 	fprintf(car_fp, "CarID\t\tDirection\t\tArrival-Time\t\tCross-Time\t\tWait-Time\n");
 	police_fp = fopen("police.log", "w");
-	fprintf(police_fp, "Time\t\tEvent\n");
+	fprintf(police_fp, "Time\t\t\tEvent\n");
 
 	// At the beginning, there are one vehicle at each lane, queue[0] means there is a car in N lane
 	enqueue(vehicleID, 0, start_time);
@@ -568,8 +570,13 @@ void keep_car_log(struct Car *temp, int lane_num) {
 	// Convert the leave time to the desired hour:minute:second format
 	leave_info = localtime(&temp->leave_time);
 	strftime (leave_time, sizeof leave_time, "%H:%M:%S", leave_info);
+	// Set Lane character
+	if(lane_num == 0) lane_char = 'N';
+	if(lane_num == 1) lane_char = 'E';
+	if(lane_num == 2) lane_char = 'S';
+	if(lane_num == 3) lane_char = 'W';
 	// Write the car info
-	fprintf(car_fp, "%d\t\t\t%d\t\t\t\t%s\t\t\t%s\t\t%d\n", dequeuedVehicleID, lane_num, arr_time, leave_time, temp->waiting);
+	fprintf(car_fp, "%d\t\t\t%c\t\t\t\t%s\t\t\t%s\t\t%d\n", dequeuedVehicleID, lane_char, arr_time, leave_time, temp->waiting);
 }
 
 /* Method to write the police.log file */
