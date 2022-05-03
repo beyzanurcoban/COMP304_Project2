@@ -157,9 +157,6 @@ int program_init(int argc, char *argv[]) {
 	pthread_mutex_init(&sim_counter_mutex, NULL);
 	pthread_mutex_init(&phone_counter_mutex, NULL);
 
-	fclose(car_fp);
-	fclose(police_fp);
-
 	return 0;
 	
 }
@@ -212,6 +209,9 @@ int main(int argc, char *argv[]) {
 	pthread_cond_destroy(&police_wakes_up);
 	pthread_mutex_destroy(&sim_counter_mutex);
 	pthread_mutex_destroy(&phone_counter_mutex);
+	
+	fclose(car_fp);
+	fclose(police_fp);
 
 	return 0;
 
